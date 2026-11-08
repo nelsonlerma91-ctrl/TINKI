@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tinki Industry Jeans · Inventario</title>
+<style>
+:root{--bg:#050505;--card:#121110;--tx:#f4ecd6;--mut:#a99e83;--bd:#3b3322;--ac:#d4af37;--act:#14110a;--bad:#f87171;--ok:#6ee7a0;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+#app{max-width:980px;margin:0 auto;padding:14px}
+h1{font-size:20px;color:var(--ac);margin:0}
+h2{font-size:16px;margin:16px 0 8px;color:var(--ac)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:12px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+button,input,select{font:inherit;color:var(--tx)}
+button{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:8px 12px;cursor:pointer}
+button:disabled{opacity:.6;cursor:default}
+button.p{background:var(--ac);color:var(--act);border-color:var(--ac);font-weight:600}
+button.on{border-color:var(--ac);color:var(--ac);font-weight:600}
+button.d{color:var(--bad)}
+input,select{background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:8px;min-width:0}
+input.n{width:96px;text-align:right}
+.sc{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:460px}
+th,td{padding:7px 6px;text-align:right;border-bottom:1px solid var(--bd);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-size:12px;color:var(--mut);font-weight:600}
+.mut{color:var(--mut)}.bad{color:var(--bad)}.ok{color:var(--ok)}
+.lk{color:var(--ac);cursor:pointer;text-decoration:underline}
+#msg{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;background:var(--tx);color:var(--bg);padding:10px 16px;border-radius:10px;max-width:90%;z-index:9}
+@media(max-width:600px){#app{padding:10px}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="msg" hidden></div>
+<script>
+// Única línea que se cambia: la URL del servidor (la que termina en /exec). No lleve claves aquí.
+const API_URL_FIJA = 'https://script.google.com/macros/s/AKfycbweHH8-q0s2yI2dGFB_yIGeAkwgHJJhInUju3YfH-6vNw5lX98cThlk4QnSifHib9o6/exec';
+
+const SES_KEY = 'tinki_ses', URL_KEY = 'tinki_url';
+const S = { ses: null, d: null, ver: null, tab: 'puestos', fecha: null, busy: false };
+const $ = s => document.querySelector(s);
+const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pesos = n => '$' + Math.round(Number(n) || 0).toLocaleString('es-CO');
+const clon = o => JSON.parse(JSON.stringify(o));
+const serverUrl = () => { try { return localStorage.getItem(URL_KEY) || API_URL_FIJA; } catch (e) { return API_URL_FIJA; } };
+const cabecera = (t, extra) => `<div class="top"><div><h1>${esc(t)}</h1><span class="mut" style="font-size:13px">Tinki Industry Jeans · Control de inventario</span></div><div class="row">${extra || ''}</div></div>`;
+
+let _mt = null;
+function msg(t) { const m = $('#msg'); m.textContent = t; m.hidden = false; clearTimeout(_mt); _mt = setTimeout(() => { m.hidden = true; }, 3000); }
+
+async function sha(t) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+const hashClave = (u, c) => sha('inv|' + u + '|' + c);
+
+async function api(body) {
+  const url = serverUrl();
+  if (!url || url.indexOf('PEGUE-AQUI') === 0) throw new Error('Falta configurar la dirección del servidor (Configurar servidor).');
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 25000);
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body), signal: ctl.signal });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    return j;
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('El servidor tardó demasiado. Intente de nuevo.');
+    if (e instanceof SyntaxError) throw new Error('El servidor no respondió bien. Revise la dirección.');
+    throw e;
+  } finally { clearTimeout(t); }
+}
+const req = (accion, extra) => api(Object.assign({ accion, u: S.ses.u, h: S.ses.h }, extra || {}));
+const regOf = (d, pid, fecha) => (d.registros && d.registros['reg/' + pid + '/' + fecha]) || { entregas: [], parcial: {}, cerrado: false };
+const entOf = (r, p) => (r.entregas || []).reduce((t, y) => y.p === p ? t + Number(y.c) : t, 0);
+function vendido(r, p) {
+  if (r.cerrado && r.final && r.final[p] != null) return entOf(r, p) - r.final[p];
+  return (r.parcial && r.parcial[p]) || 0;
+}
+function quitar(r, p, c) {
+  for (let i = r.entregas.length - 1; i >= 0 && c > 0; i--) {
+    if (r.entregas[i].p !== p) continue;
+    const t = Math.min(c, r.entregas[i].c);
+    r.entregas[i].c -= t; c -= t;
+  }
+  r.entregas = r.entregas.filter(y => y.c > 0);
+}
+
+// ---------- INGRESO ----------
+function pantallaLogin(err) {
+  $('#app').innerHTML = `<div class="card" style="max-width:380px;margin:40px auto">
+    <h1 style="text-align:center">Tinki Industry Jeans</h1>
+    <p class="mut" style="text-align:center;margin:4px 0 14px">Control de inventario</p>
+    <input id="lu" placeholder="Usuario" autocomplete="username" style="width:100%;margin-bottom:8px">
+    <input id="lc" type="password" placeholder="Clave" autocomplete="current-password" style="width:100%">
+    <div class="row" style="margin-top:10px"><button class="p" id="bl" style="flex:1">Entrar</button></div>
+    <p class="bad" id="le" style="min-height:20px">${esc(err || '')}</p>
+    <p style="text-align:center;margin:6px 0 0"><span class="lk" id="cfg">Configurar servidor</span></p></div>`;
+  $('#bl').onclick = entrar;
+  $('#lc').onkeydown = e => { if (e.key === 'Enter') entrar(); };
+  $('#cfg').onclick = () => {
+    const v = prompt('Dirección del servidor (la URL que termina en /exec):', serverUrl());
+    if (v && v.trim()) { try { localStorage.setItem(URL_KEY, v.trim()); } catch (e) {} msg('Servidor guardado'); }
+  };
+}
+
+async function entrar() {
+  const u = $('#lu').value.trim().toLowerCase(), c = $('#lc').value;
+  if (!u || !c) { $('#le').textContent = 'Escriba usuario y clave.'; return; }
+  const b = $('#bl'); b.disabled = true;
+  try {
+    const h = await hashClave(u, c);
+    const d = await api({ accion: 'login', u, h });
+    S.ses = { u, h };
+    localStorage.setItem(SES_KEY, JSON.stringify(S.ses));
+    aplicar(d);
+  } catch (e) {
+    $('#le').textContent = e.message;
+    b.disabled = false;
+  }
+}
+
+async function entrarGuardada() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SES_KEY) || 'null'); } catch (e) {}
+  if (!s || !s.u || !s.h) return;
+  S.ses = s;
+  try { aplicar(await req('sync', {})); }
+  catch (e) {
+    S.ses = null;
+    if (/Autenticación/.test(e.message)) localStorage.removeItem(SES_KEY);
+    pantallaLogin(e.message);
+  }
+}
+
+// ---------- DATOS ----------
+function aplicar(d) {
+  S.d = d; S.ver = d.ver;
+  if (!S.fecha || d.rol === 'puesto') S.fecha = d.hoy;
+  dibujar();
+}
+async function refrescar() { aplicar(await req('sync', {})); }
+async function guardarReg(pid, r) {
+  await req('set', { k: 'reg/' + pid + '/' + S.fecha, v: r });
+  await refrescar();
+}
+
+async function sincronizar() {
+  if (!S.ses || document.hidden) return;
+  try {
+    const d = await req('sync', { ver: S.ver });
+    if (d.same) return;
+    S.ver = d.ver; S.d = d;
+    const a = document.activeElement;
+    const editando = a && a.tagName === 'INPUT' && $('#app').contains(a);
+    if (!editando && S.tab !== 'bit') dibujar();
+  } catch (e) {
+    if (/Autenticación/.test(e.message)) {
+      localStorage.removeItem(SES_KEY); S.ses = null; S.d = null;
+      pantallaLogin('Su acceso cambió. Entre de nuevo.');
+    }
+  }
+}
+
+// ---------- VISTA ADMINISTRADOR ----------
+function dibujar() {
+  if (!S.d) return;
+  if (S.d.rol === 'admin') dibujarAdmin(S.d); else dibujarPuesto(S.d);
+}
+
+function dibujarAdmin(d) {
+  const pids = Object.keys(d.puestos).sort((a, b) => d.puestos[a].nombre.localeCompare(d.puestos[b].nombre, 'es'));
+  const tabs = [['puestos', 'Por puesto'], ['catalogo', 'Catálogo y costos'], ['accesos', 'Puestos y claves'], ['bit', 'Bitácora']];
+  let h = cabecera('Inventario · Administrador',
+    `<span class="mut">Fecha</span><input type="date" id="fecha" value="${S.fecha}"><button data-a="salir">Salir</button>`);
+  h += `<div class="tabs">${tabs.map(([k, t]) => `<button class="${S.tab === k ? 'on' : ''}" data-a="tab" data-t="${k}">${t}</button>`).join('')}</div>`;
+  if (S.tab === 'puestos') h += vistaPuestos(d, pids);
+  else if (S.tab === 'catalogo') h += vistaCatalogo(d);
+  else if (S.tab === 'accesos') h += vistaAccesos(d, pids);
+  else h += '<div class="card" id="bitbox"><p class="mut">Cargando bitácora…</p></div>';
+  $('#app').innerHTML = h;
+  if (S.tab === 'bit') cargarBit();
+}
+
+function vistaPuestos(d, pids) {
+  if (!pids.length) return '<div class="card"><p class="mut">No hay puestos. Créelos en “Puestos y claves”.</p></div>';
+  return pids.map(id => {
+    const p = d.puestos[id], r = regOf(d, id, S.fecha);
+    const filas = d.catalogo.map(x => {
+      const v = vendido(r, x.id);
+      return `<tr><td>${esc(x.nombre)}</td><td>${pesos(x.precio)}</td><td>${pesos((d.costos || {})[x.id])}</td><td>${entOf(r, x.id)}</td><td>${v}</td><td>${pesos(v * x.precio)}</td></tr>`;
+    }).join('');
+    const opts = d.catalogo.map(x => `<option value="${esc(x.id)}">${esc(x.nombre)}</option>`).join('');
+    return `<div class="card">
+      <div class="top"><div><b>${esc(p.nombre)}</b> <span class="mut">· ${esc(p.resp || '')}</span></div>
+        <span class="${r.cerrado ? 'ok' : 'mut'}">${r.cerrado ? 'Día cerrado' : 'Día abierto'}</span></div>
+      <div class="sc"><table><tr><th>Producto</th><th>Precio dist.</th><th>Costo</th><th>Entregado</th><th>Vendido</th><th>Por liquidar</th></tr>
+        ${filas || '<tr><td colspan="6" class="mut">Sin productos</td></tr>'}</table></div>
+      <div class="row" style="margin-top:10px">
+        <select id="ep_${id}">${opts}</select>
+        <input id="ec_${id}" class="n" type="number" min="1" placeholder="Cant.">
+        <button class="p" data-a="entrega" data-pid="${id}">Agregar entrega</button>
+        <button data-a="restar" data-pid="${id}">Restar</button>
+        ${r.cerrado ? `<button data-a="reabrir" data-pid="${id}">Reabrir día</button>` : ''}
+      </div></div>`;
+  }).join('');
+}
+
+function vistaCatalogo(d) {
+  const filas = d.catalogo.map(x => `<tr><td>${esc(x.nombre)}</td><td>${pesos(x.precio)}</td><td>${pesos((d.costos || {})[x.id])}</td>
+    <td><button class="d" data-a="delprod" data-id="${esc(x.id)}">Quitar</button></td></tr>`).join('');
+  return `<div class="card"><h2 style="margin-top:0">Productos</h2>
+    <div class="sc"><table><tr><th>Producto</th><th>Precio distribución</th><th>Costo</th><th></th></tr>
+    ${filas || '<tr><td colspan="4" class="mut">Sin productos</td></tr>'}</table></div>
+    <h2>Nuevo producto</h2>
+    <div class="row"><input id="pn" placeholder="Nombre" style="flex:1;min-width:150px">
+    <input id="pp" class="n" type="number" placeholder="Precio dist.">
+    <input id="pc" class="n" type="number" placeholder="Costo">
+    <button class="p" data-a="addprod">Agregar</button></div></div>`;
+}
+
+function vistaAccesos(d, pids) {
+  const filas = pids.map(id => {
+    const p = d.puestos[id];
+    return `<tr><td>${esc(p.nombre)}</td><td>${esc(p.resp || '')}</td><td>${esc(p.usr)}</td>
+      <td><input id="nk_${id}" type="password" placeholder="Nueva clave" style="width:130px">
+      <button data-a="clavepuesto" data-id="${id}">Cambiar clave</button>
+      <button class="d" data-a="delpuesto" data-id="${id}">Eliminar</button></td></tr>`;
+  }).join('');
+  return `<div class="card"><h2 style="margin-top:0">Puestos y responsables</h2>
+    <div class="sc"><table><tr><th>Puesto</th><th>Responsable</th><th>Usuario</th><th></th></tr>
+    ${filas || '<tr><td colspan="4" class="mut">Sin puestos</td></tr>'}</table></div>
+    <h2>Nuevo puesto</h2>
+    <div class="row"><input id="qn" placeholder="Nombre del puesto" style="flex:1;min-width:130px">
+    <input id="qr" placeholder="Responsable" style="flex:1;min-width:120px">
+    <input id="qu" placeholder="Usuario" style="width:130px">
+    <input id="qp" type="password" placeholder="Clave (mín. 4)" style="width:150px">
+    <button class="p" data-a="addpuesto">Crear</button></div>
+    <h2>Mi clave de administrador</h2>
+    <div class="row"><input id="ac" type="password" placeholder="Nueva clave (mín. 4)">
+    <button data-a="cambiaradm">Cambiar</button></div></div>`;
+}
+
+async function cargarBit() {
+  const box = $('#bitbox');
+  try {
+    const j = await req('bitacora', {});
+    const f = j.filas.map(x => `<tr><td>${esc(new Date(x[0]).toLocaleString('es-CO'))}</td><td>${esc(x[1])}</td>
+      <td style="text-align:left;white-space:normal">${esc(x[2])}</td></tr>`).join('');
+    box.innerHTML = `<h2 style="margin-top:0">Bitácora (últimos 200)</h2><div class="sc"><table style="min-width:360px">
+      <tr><th>Fecha</th><th>Usuario</th><th>Acción</th></tr>${f || '<tr><td colspan="3" class="mut">Sin registros</td></tr>'}</table></div>`;
+  } catch (e) { box.innerHTML = `<p class="bad">${esc(e.message)}</p>`; }
+}
+
+async function accionEntrega(pid, signo) {
+  const p = $('#ep_' + pid).value, c = parseInt($('#ec_' + pid).value, 10);
+  if (!(c > 0)) return msg('Cantidad inválida');
+  const r = clon(regOf(S.d, pid, S.fecha));
+  r.entregas = r.entregas || [];
+  if (signo > 0) {
+    r.entregas.push({ p, c, h: new Date().toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) });
+  } else {
+    if (c > entOf(r, p)) return msg('No puede restar más de lo entregado (' + entOf(r, p) + ').');
+    if (!confirm('¿Restar ' + c + ' unidades de las entregas de este día?')) return;
+    quitar(r, p, c);
+  }
+  if (r.parcial && (r.parcial[p] || 0) > entOf(r, p)) return msg('Ya hay ' + r.parcial[p] + ' vendidas reportadas; no puede quedar con menos disponible.');
+  await guardarReg(pid, r);
+  msg(signo > 0 ? 'Entrega agregada' : 'Se restaron ' + c + ' unidades');
+}
+
+// ---------- VISTA RESPONSABLE (sin costos) ----------
+function dibujarPuesto(d) {
+  const pid = d.puesto, p = d.puestos[pid] || { nombre: '' }, r = regOf(d, pid, d.hoy);
+  const enPeriodo = d.hoy >= d.periodo.ini && d.hoy <= d.periodo.fin;
+  const puede = enPeriodo && !r.cerrado;
+  const dis = puede ? '' : 'disabled';
+  let tot = 0;
+  const filas = d.catalogo.map(x => {
+    const ent = entOf(r, x.id), tiene = r.cerrado || (r.parcial && r.parcial[x.id] != null);
+    const v = vendido(r, x.id), lq = v * x.precio;
+    tot += lq;
+    return `<tr><td>${esc(x.nombre)}</td><td>${pesos(x.precio)}</td><td>${ent}</td>
+      <td><input class="n" type="number" min="0" inputmode="numeric" data-ven="${esc(x.id)}" data-precio="${Number(x.precio)}" value="${tiene ? v : ''}" ${dis}></td>
+      <td data-lq="${esc(x.id)}">${pesos(lq)}</td></tr>`;
+  }).join('');
+  const aviso = r.cerrado ? '<p class="ok"><b>Día cerrado y enviado.</b></p>'
+    : (enPeriodo ? '' : `<p class="bad">Fuera del periodo de registro (${d.periodo.ini} a ${d.periodo.fin}).</p>`);
+  const botones = puede
+    ? `<button data-a="avance">Guardar avance</button><button class="p" data-a="cerrar">Cerrar día y enviar</button>` : '';
+  return cabecera('Hola, ' + (p.resp || p.nombre), `<button data-a="salir">Salir</button>`) + `
+    <div class="card">
+      <div class="top"><div><b>${esc(p.nombre)}</b> <span class="mut">· ${esc(d.hoy)}</span></div></div>
+      ${aviso}
+      <div class="sc"><table style="min-width:420px"><tr><th>Producto</th><th>Precio</th><th>Entregado hoy</th><th>Vendidas</th><th>Por liquidar</th></tr>
+        ${filas || '<tr><td colspan="5" class="mut">Sin productos</td></tr>'}
+        <tr><td colspan="4"><b>Total por liquidar</b></td><td><b id="tot">${pesos(tot)}</b></td></tr></table></div>
+      <div class="row" style="margin-top:12px">${botones}<button data-a="copiar">Copiar resumen (WhatsApp)</button></div>
+    </div>`;
+}
+
+function leerVentas() {
+  const pa = {};
+  document.querySelectorAll('[data-ven]').forEach(i => { pa[i.dataset.ven] = i.value === '' ? 0 : (parseInt(i.value, 10) || 0); });
+  return pa;
+}
+function recalcular() {
+  let tot = 0;
+  document.querySelectorAll('[data-ven]').forEach(i => {
+    const v = i.value === '' ? 0 : (parseInt(i.value, 10) || 0), l = v * Number(i.dataset.precio);
+    tot += l;
+    const td = document.querySelector('[data-lq="' + i.dataset.ven + '"]');
+    if (td) td.textContent = pesos(l);
+  });
+  const t = $('#tot'); if (t) t.textContent = pesos(tot);
+}
+
+// ---------- ACCIONES ----------
+const A = {
+  salir() { localStorage.removeItem(SES_KEY); S.ses = null; S.d = null; pantallaLogin(); },
+  tab(b) { S.tab = b.dataset.t; dibujar(); },
+  entrega(b) { return accionEntrega(b.dataset.pid, 1); },
+  restar(b) { return accionEntrega(b.dataset.pid, -1); },
+  async reabrir(b) {
+    const r = clon(regOf(S.d, b.dataset.pid, S.fecha)); r.cerrado = false;
+    await guardarReg(b.dataset.pid, r); msg('Día reabierto');
+  },
+  async addprod() {
+    const n = $('#pn').value.trim();
+    const pr = $('#pp').value === '' ? NaN : +$('#pp').value;
+    const co = $('#pc').value === '' ? 0 : +$('#pc').value;
+    if (!n || !(pr >= 0)) return msg('Escriba nombre y precio de distribución');
+    const id = 'p' + Date.now();
+    await req('set', { k: 'catalogo', v: S.d.catalogo.concat([{ id, nombre: n, precio: pr }]) });
+    await req('set', { k: 'costos', v: Object.assign({}, S.d.costos || {}, { [id]: co }) });
+    msg('Producto creado'); await refrescar();
+  },
+  async delprod(b) {
+    if (!confirm('¿Quitar este producto del catálogo? Los registros anteriores se conservan.')) return;
+    await req('set', { k: 'catalogo', v: S.d.catalogo.filter(x => x.id !== b.dataset.id) });
+    msg('Producto quitado'); await refrescar();
+  },
+  async addpuesto() {
+    const n = $('#qn').value.trim(), r = $('#qr').value.trim(), u = $('#qu').value.trim().toLowerCase(), c = $('#qp').value;
+    if (!n || !u || c.length < 4) return msg('Falta nombre, usuario o clave (mínimo 4 caracteres)');
+    if (u === S.ses.u || Object.values(S.d.puestos).some(p => p.usr === u)) return msg('Ese usuario ya existe');
+    const ps = clon(S.d.puestos);
+    ps['q' + Date.now()] = { nombre: n, resp: r, usr: u, h: await hashClave(u, c) };
+    await req('set', { k: 'puestos', v: ps });
+    msg('Puesto creado'); await refrescar();
+  },
+  async delpuesto(b) {
+    if (!confirm('¿Eliminar este puesto? Sus registros se conservan.')) return;
+    const ps = clon(S.d.puestos); delete ps[b.dataset.id];
+    await req('set', { k: 'puestos', v: ps });
+    msg('Puesto eliminado'); await refrescar();
+  },
+  async clavepuesto(b) {
+    const id = b.dataset.id, c = $('#nk_' + id).value;
+    if (c.length < 4) return msg('La clave debe tener mínimo 4 caracteres');
+    await req('clavepuesto', { id, nh: await hashClave(S.d.puestos[id].usr, c) });
+    msg('Clave del puesto actualizada');
+  },
+  async cambiaradm() {
+    const c = $('#ac').value;
+    if (c.length < 4) return msg('La clave debe tener mínimo 4 caracteres');
+    const nh = await hashClave(S.ses.u, c);
+    await req('cambiarclave', { nh });
+    S.ses.h = nh; localStorage.setItem(SES_KEY, JSON.stringify(S.ses));
+    $('#ac').value = ''; msg('Clave de administrador actualizada');
+  },
+  async avance() {
+    await req('set', { k: 'reg/' + S.d.puesto + '/' + S.d.hoy, v: { parcial: leerVentas(), cerrado: false } });
+    msg('Avance guardado'); await refrescar();
+  },
+  async cerrar() {
+    if (!confirm('¿Cerrar el día y enviar? Las vendidas en blanco cuentan como 0. Ya no podrá modificar el día.')) return;
+    await req('set', { k: 'reg/' + S.d.puesto + '/' + S.d.hoy, v: { parcial: leerVentas(), cerrado: true } });
+    msg('Día cerrado y enviado'); await refrescar();
+  },
+  async copiar() {
+    const d = S.d, pa = leerVentas(), r = regOf(d, d.puesto, d.hoy);
+    let t = 'Tinki Industry Jeans · ' + ((d.puestos[d.puesto] || {}).nombre || '') + ' · ' + d.hoy + '\n', tot = 0;
+    d.catalogo.forEach(x => {
+      const v = pa[x.id] || 0, l = v * x.precio;
+      tot += l;
+      t += x.nombre + ': entregadas ' + entOf(r, x.id) + ', vendidas ' + v + ', por liquidar ' + pesos(l) + '\n';
+    });
+    t += 'Total por liquidar: ' + pesos(tot);
+    await navigator.clipboard.writeText(t);
+    msg('Resumen copiado');
+  }
+};
+
+// ---------- EVENTOS ----------
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-a]');
+  if (!b || !A[b.dataset.a]) return;
+  if (S.busy) return msg('Espere un momento…');
+  S.busy = true;
+  try { await A[b.dataset.a](b); }
+  catch (err) { msg(err.message); }
+  finally { S.busy = false; }
+});
+document.addEventListener('change', e => {
+  if (e.target.id === 'fecha') { S.fecha = e.target.value || S.d.hoy; dibujar(); }
+});
+document.addEventListener('input', e => {
+  if (e.target.dataset && e.target.dataset.ven) recalcular();
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) sincronizar(); });
+
+// ---------- ARRANQUE ----------
+pantallaLogin();          // la pantalla de ingreso sale de inmediato
+entrarGuardada();         // el ingreso automático corre en segundo plano
+setInterval(sincronizar, 10000);
+</script>
+</body>
+</html>
