@@ -147,7 +147,7 @@ async function entrarGuardada() {
   try { s = JSON.parse(localStorage.getItem(SES_KEY) || 'null'); } catch (e) {}
   if (!s || !s.u || !s.h) return;
   S.ses = s;
-  try { await aplicar(await req('sync', {})); }
+  try { await aplicar(await req('bundle', {})); }
   catch (e) {
     S.ses = null;
     if (/Autenticación/.test(e.message)) localStorage.removeItem(SES_KEY);
@@ -169,12 +169,11 @@ async function cargarPuesto(d) {
   return d;
 }
 async function aplicar(d) {
-  if (d.rol === 'puesto') await cargarPuesto(d);
   S.d = d; S.ver = d.ver;
-  if (!S.fecha || d.rol === 'puesto') S.fecha = d.hoy;
+  S.fecha = d.hoy;
   dibujar();
 }
-async function refrescar() { await aplicar(await req('sync', {})); }
+async function refrescar() { await aplicar(await req('bundle', {})); }
 async function guardarReg(pid, r) {
   await req('set', { k: 'reg/' + pid + '/' + S.fecha, v: r });
   await refrescar();
@@ -183,8 +182,7 @@ async function guardarReg(pid, r) {
 async function sincronizar() {
   if (!S.ses || document.hidden) return;
   try {
-    const d = await req('sync', {});
-    if (d.rol === 'puesto') await cargarPuesto(d);
+    const d = await req('bundle', {});
     S.ver = d.ver; S.d = d;
     const a = document.activeElement;
     const editando = a && a.tagName === 'INPUT' && $('#app').contains(a);
@@ -312,11 +310,11 @@ function dibujarPuesto(d) {
   const dis = puede ? '' : 'disabled';
   let tot = 0;
   const filas = d.catalogo.map(x => {
-    const ent = entOf(r, x.id), tiene = r.cerrado || (r.parcial && r.parcial[x.id] != null);
+    const ent = entOf(r, x.id), disp = ((r.inicial && r.inicial[x.id]) || 0) + ent, tiene = r.cerrado || (r.parcial && r.parcial[x.id] != null);
     const v = vendido(r, x.id), lq = v * x.precio;
     tot += lq;
-    return `<tr><td>${esc(x.nombre)}</td><td>${pesos(x.precio)}</td><td>${ent}</td>
-      <td><input class="n" type="number" min="0" inputmode="numeric" data-ven="${esc(x.id)}" data-precio="${Number(x.precio)}" value="${tiene ? v : ''}" ${dis}></td>
+    return `<tr><td>${esc(x.nombre)}</td><td>${pesos(x.precio)}</td><td>${disp}</td>
+      <td><input class="n" type="number" min="0" inputmode="numeric" data-ven="${esc(x.id)}" data-precio="${Number(x.precio)}" data-max="${disp}" value="${tiene ? v : ''}" ${dis}></td>
       <td data-lq="${esc(x.id)}">${pesos(lq)}</td></tr>`;
   }).join('');
   const aviso = r.cerrado ? '<p class="ok"><b>Día cerrado y enviado.</b></p>'
@@ -327,7 +325,7 @@ function dibujarPuesto(d) {
     <div class="card">
       <div class="top"><div><b>${esc(p.nombre)}</b> <span class="mut">· ${esc(d.hoy)}</span></div></div>
       ${aviso}
-      <div class="sc"><table style="min-width:420px"><tr><th>Producto</th><th>Precio</th><th>Entregado hoy</th><th>Vendidas</th><th>Por liquidar</th></tr>
+      <div class="sc"><table style="min-width:420px"><tr><th>Producto</th><th>Precio</th><th>Disponible hoy</th><th>Vendidas</th><th>Por liquidar</th></tr>
         ${filas || '<tr><td colspan="5" class="mut">Sin productos</td></tr>'}
         <tr><td colspan="4"><b>Total por liquidar</b></td><td><b id="tot">${pesos(tot)}</b></td></tr></table></div>
       <div class="row" style="margin-top:12px">${botones}<button data-a="copiar">Copiar resumen (WhatsApp)</button></div>
