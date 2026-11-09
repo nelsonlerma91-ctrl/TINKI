@@ -77,7 +77,7 @@ function subRegs(){if(S.unsub)S.unsub();
   try{S.db=remoteDB();S.local=false}catch(e){}
   try{S.ses=JSON.parse(localStorage.getItem('inv_ses')||'null')}catch(e){S.ses=null}
   if(S.ses&&S.ses.u&&S.ses.h){
-    try{aplicarSrv(await srv({accion:'sync'}))}
+    try{aplicarSrv(await srv({accion:'bundle'}))}
     catch(e){S.ses=null;try{localStorage.removeItem('inv_ses')}catch(x){};msg(e.message)}
   }
   S.ready=true;render(true);
@@ -85,6 +85,8 @@ function subRegs(){if(S.unsub)S.unsub();
 function aplicarSrv(d){
   if(d.rol!=='admin')throw new Error('Esta entrada es solo para el administrador. Use la entrada de responsables.');
   S.admin=true;S.isAdm=true;S.acc={u:USUARIO_ADMIN,otros:[]};
+  cacheFill(d);
+  S.fecha=d.hoy;
   iniciarSubs();
 }
 let _subsOk=false;
@@ -152,8 +154,9 @@ function dia(pid,adm){
 const API_URL_FIJA='https://script.google.com/macros/s/AKfycbweHH8-q0s2yI2dGFB_yIGeAkwgHJJhInUju3YfH-6vNw5lX98cThlk4QnSifHib9o6/exec';
 const USUARIO_ADMIN='admon';
 const SUBS=[];
+const CACHE={doc:{},col:{}};
+let _hoy=null;
 function notifyAll(){SUBS.slice().forEach(x=>x.run())}
-setInterval(()=>{if(S.ses)notifyAll()},8000);
 async function srv(body){
   let url=API_URL_FIJA;try{url=localStorage.getItem('tinki_url')||API_URL_FIJA}catch(e){}
   const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),25000);
@@ -172,24 +175,45 @@ async function srv(body){
 }
 const BLOQ_EN_LINEA=['setup','resetadm','reset','ejemplo','creardatos','addadm','deladm'];
 const snapD=(p,d)=>({id:p.split('/').pop(),exists:d!=null,data:()=>d==null?undefined:JSON.parse(JSON.stringify(d))});
+// Paquete del servidor: llena la memoria de la página (una llamada para todo)
+function cacheFill(b){
+  _hoy=b.hoy;
+  CACHE.doc={'config/main':b.config,'costos/main':b.costos,'respaldo/ultimo':b.respaldo||null};
+  CACHE.col={
+    puestos:Object.keys(b.puestos||{}).map(id=>({id,data:b.puestos[id]})),
+    cierres:Object.keys(b.cierres||{}).map(id=>({id,data:b.cierres[id]})),
+    gastos:(b.gastos||[]).map(g=>({id:g.id,data:g.data})),
+    registros:(b.regsList||[]),
+    bitacora:(b.bitacora||[]).map((x,i)=>({id:'b'+i,data:{t:Date.parse(x.fecha),fecha:String(x.fecha||'').slice(0,10),quien:x.usuario,acc:x.texto}}))
+  };
+}
+async function refrescarTodo(){const b=await srv({accion:'bundle'});cacheFill(b);notifyAll()}
 async function fetchDoc(p){
   if(p==='acceso/admin')return{u:USUARIO_ADMIN,otros:[]};
+  if(p in CACHE.doc)return CACHE.doc[p];
   const r=await srv({accion:'docget',path:p});return r.exists?r.data:null;
+}
+async function consulta(c,fl){
+  const f=fl.find(x=>x[0]==='fecha'&&x[1]==='==');
+  if(c==='registros'&&f&&f[2]!==_hoy){const r=await srv({accion:'docquery',col:'registros',where:fl});return r.docs}
+  const base=CACHE.col[c]||[];
+  return base.filter(d=>fl.every(x=>x[1]==='=='?(d.data||{})[x[0]]===x[2]:true));
 }
 async function writeDoc(p,d,upd){
   if(p.indexOf('bitacora/')===0)return;
   if(p==='acceso/admin'){if(d&&d.h&&d.u===USUARIO_ADMIN)await srv({accion:'cambiarclave',nh:d.h});return}
-  await srv({accion:upd?'docupdate':'docset',path:p,data:d});notifyAll();
+  await srv({accion:upd?'docupdate':'docset',path:p,data:d});
+  await refrescarTodo();
 }
 async function deleteDoc(p){
   if(p.indexOf('bitacora/')===0)return;
-  await srv({accion:'docdelete',path:p});notifyAll();
+  await srv({accion:'docdelete',path:p});await refrescarTodo();
 }
 function sub(fetchFn,n,onErr){
-  let last=null;
-  const x={run:async()=>{try{const v=await fetchFn();const j=JSON.stringify(v.raw);if(j!==last){last=j;n(v.snap)}}catch(e){if(onErr)onErr(e)}}};
+  let last=null,off=false;
+  const x={run:async()=>{if(off)return;try{const v=await fetchFn();if(off)return;const j=JSON.stringify(v.raw);if(j!==last){last=j;n(v.snap)}}catch(e){if(!off&&onErr)onErr(e)}}};
   SUBS.push(x);x.run();
-  return()=>{const i=SUBS.indexOf(x);if(i>=0)SUBS.splice(i,1)};
+  return()=>{off=true;const i=SUBS.indexOf(x);if(i>=0)SUBS.splice(i,1)};
 }
 function remoteDB(){
   const doc=p=>({id:p.split('/').pop(),path:p,
@@ -199,14 +223,7 @@ function remoteDB(){
     delete:async()=>deleteDoc(p),
     onSnapshot:(n,err)=>sub(async()=>{const d=await fetchDoc(p);return{raw:d,snap:snapD(p,d)}},n,err)});
   const coll=(c,fl)=>{fl=fl||[];
-    const q=async()=>{
-      if(c==='bitacora'){
-        const r=await srv({accion:'docquery',col:'bitacora',where:[]});
-        return r.docs.map(x=>({id:x.id,data:()=>({t:Date.parse(x.data.fecha),fecha:String(x.data.fecha||'').slice(0,10),quien:x.data.usuario,acc:x.data.texto})}));
-      }
-      const r=await srv({accion:'docquery',col:c,where:fl});
-      return r.docs.map(x=>({id:x.id,data:()=>JSON.parse(JSON.stringify(x.data))}));
-    };
+    const q=async()=>(await consulta(c,fl)).map(x=>({id:x.id,data:()=>JSON.parse(JSON.stringify(x.data))}));
     const pack=d=>({docs:d,size:d.length,empty:!d.length});
     return{where:(f,o,v)=>coll(c,fl.concat([[f,o,v]])),
       get:async()=>pack(await q()),
@@ -216,7 +233,7 @@ function remoteDB(){
   };
   return{doc,collection:c=>coll(c),dump:()=>({}),load:()=>{}};
 }
-
+setInterval(()=>{if(S.admin&&S.ses)refrescarTodo().catch(()=>{})},8000);
 
 async function guardar(n,t){let dl=null;try{dl=await claude.use('downloads')}catch(e){}
   if(dl)return dl.save({filename:n,data:'\ufeff'+t});
