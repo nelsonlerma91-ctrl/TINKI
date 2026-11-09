@@ -75,7 +75,7 @@ async function api(body) {
   } finally { clearTimeout(t); }
 }
 const req = (accion, extra) => api(Object.assign({ accion, u: S.ses.u, h: S.ses.h }, extra || {}));
-const regOf = (d, pid, fecha) => (d.registros && d.registros['reg/' + pid + '/' + fecha]) || { entregas: [], parcial: {}, cerrado: false };
+const regOf = (d, pid, fecha) => (d.registros && d.registros['registros/' + pid + '_' + fecha]) || { entregas: [], parcial: {}, cerrado: false };
 const entOf = (r, p) => (r.entregas || []).reduce((t, y) => y.p === p ? t + Number(y.c) : t, 0);
 function vendido(r, p) {
   if (r.cerrado && r.final && r.final[p] != null) return entOf(r, p) - r.final[p];
@@ -135,7 +135,7 @@ async function entrar() {
     if (S.modo === 'puesto' && d.rol === 'admin') throw new Error('Este usuario es administrador. Use la entrada de Administrador.');
     S.ses = { u, h };
     localStorage.setItem(SES_KEY, JSON.stringify(S.ses));
-    aplicar(d);
+    await aplicar(d);
   } catch (e) {
     $('#le').textContent = e.message;
     b.disabled = false;
@@ -147,7 +147,7 @@ async function entrarGuardada() {
   try { s = JSON.parse(localStorage.getItem(SES_KEY) || 'null'); } catch (e) {}
   if (!s || !s.u || !s.h) return;
   S.ses = s;
-  try { aplicar(await req('sync', {})); }
+  try { await aplicar(await req('sync', {})); }
   catch (e) {
     S.ses = null;
     if (/Autenticación/.test(e.message)) localStorage.removeItem(SES_KEY);
@@ -156,12 +156,23 @@ async function entrarGuardada() {
 }
 
 // ---------- DATOS ----------
-function aplicar(d) {
+async function cargarPuesto(d) {
+  const cfg = await req('docget', { path: 'config/main' });
+  const regs = await req('docquery', { col: 'registros', where: [] });
+  d.catalogo = (cfg.data && cfg.data.prods) || [];
+  d.registros = {};
+  regs.docs.forEach(x => { d.registros['registros/' + x.id] = x.data; });
+  const pu = await req('docget', { path: 'puestos/' + d.puesto });
+  if (pu.data) d.puestos = Object.assign({}, d.puestos, { [d.puesto]: pu.data });
+  return d;
+}
+async function aplicar(d) {
+  if (d.rol === 'puesto') await cargarPuesto(d);
   S.d = d; S.ver = d.ver;
   if (!S.fecha || d.rol === 'puesto') S.fecha = d.hoy;
   dibujar();
 }
-async function refrescar() { aplicar(await req('sync', {})); }
+async function refrescar() { await aplicar(await req('sync', {})); }
 async function guardarReg(pid, r) {
   await req('set', { k: 'reg/' + pid + '/' + S.fecha, v: r });
   await refrescar();
@@ -170,8 +181,8 @@ async function guardarReg(pid, r) {
 async function sincronizar() {
   if (!S.ses || document.hidden) return;
   try {
-    const d = await req('sync', { ver: S.ver });
-    if (d.same) return;
+    const d = await req('sync', {});
+    if (d.rol === 'puesto') await cargarPuesto(d);
     S.ver = d.ver; S.d = d;
     const a = document.activeElement;
     const editando = a && a.tagName === 'INPUT' && $('#app').contains(a);
@@ -187,7 +198,7 @@ async function sincronizar() {
 // ---------- VISTA ADMINISTRADOR ----------
 function dibujar() {
   if (!S.d) return;
-  if (S.d.rol === 'admin') dibujarAdmin(S.d); else dibujarPuesto(S.d);
+  if (S.d.rol === 'admin') dibujarAdmin(S.d); else $('#app').innerHTML = dibujarPuesto(S.d);
 }
 
 function dibujarAdmin(d) {
@@ -394,12 +405,12 @@ const A = {
     $('#ac').value = ''; msg('Clave de administrador actualizada');
   },
   async avance() {
-    await req('set', { k: 'reg/' + S.d.puesto + '/' + S.d.hoy, v: { parcial: leerVentas(), cerrado: false } });
+    await req('docset', { path: 'registros/' + S.d.puesto + '_' + S.d.hoy, data: { parcial: leerVentas(), cerrado: false } });
     msg('Avance guardado'); await refrescar();
   },
   async cerrar() {
     if (!confirm('¿Cerrar el día y enviar? Las vendidas en blanco cuentan como 0. Ya no podrá modificar el día.')) return;
-    await req('set', { k: 'reg/' + S.d.puesto + '/' + S.d.hoy, v: { parcial: leerVentas(), cerrado: true } });
+    await req('docset', { path: 'registros/' + S.d.puesto + '_' + S.d.hoy, data: { parcial: leerVentas(), cerrado: true } });
     msg('Día cerrado y enviado'); await refrescar();
   },
   async copiar() {
