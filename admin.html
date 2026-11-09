@@ -185,8 +185,9 @@ async function deleteDoc(p){
   if(p.indexOf('bitacora/')===0)return;
   await srv({accion:'docdelete',path:p});notifyAll();
 }
-function sub(run,onErr){
-  const x={run:()=>run().catch(e=>{if(onErr)onErr(e)})};
+function sub(fetchFn,n,onErr){
+  let last=null;
+  const x={run:async()=>{try{const v=await fetchFn();const j=JSON.stringify(v.raw);if(j!==last){last=j;n(v.snap)}}catch(e){if(onErr)onErr(e)}}};
   SUBS.push(x);x.run();
   return()=>{const i=SUBS.indexOf(x);if(i>=0)SUBS.splice(i,1)};
 }
@@ -196,7 +197,7 @@ function remoteDB(){
     set:async d=>writeDoc(p,d,false),
     update:async d=>writeDoc(p,d,true),
     delete:async()=>deleteDoc(p),
-    onSnapshot:(n,err)=>sub(async()=>n(snapD(p,await fetchDoc(p))),err)});
+    onSnapshot:(n,err)=>sub(async()=>{const d=await fetchDoc(p);return{raw:d,snap:snapD(p,d)}},n,err)});
   const coll=(c,fl)=>{fl=fl||[];
     const q=async()=>{
       if(c==='bitacora'){
@@ -209,7 +210,7 @@ function remoteDB(){
     const pack=d=>({docs:d,size:d.length,empty:!d.length});
     return{where:(f,o,v)=>coll(c,fl.concat([[f,o,v]])),
       get:async()=>pack(await q()),
-      onSnapshot:(n,err)=>sub(async()=>n(pack(await q())),err),
+      onSnapshot:(n,err)=>sub(async()=>{const d=await q();return{raw:d.map(x=>x.data()),snap:pack(d)}},n,err),
       doc:id=>doc(c+'/'+id),
       add:async d=>{if(c==='bitacora')return;const id='a'+Date.now()+Math.random().toString(36).slice(2,6);await writeDoc(c+'/'+id,d,false);return doc(c+'/'+id)}};
   };
@@ -356,7 +357,7 @@ function draw0(){
   S.me=isAdm?null:(pids.find(id=>S.puestos[id].usr===se.u&&S.puestos[id].h===se.h)||null);
   if(isAdm){
     if(!S.sel||!S.puestos[S.sel])S.sel=pids[0]||null;
-    let h=`<div class="brand">${logo(64)}</div><div class="top"><h1>Inventario · Administrador</h1><div class="row"><button data-a="logout">Salir</button><span class="mut">Fecha</span><input type="date" id="fecha" min="${INI}" max="${FIN}" value="${S.fecha}"></div></div>
+    let h=`<div class="brand">${logo(64)}</div><div class="top"><h1>Inventario · Administrador</h1><div class="row">${S.vResp?'<button data-a="volverAdm">Volver a administrador</button>':'<button data-a="verResp">Ver responsables</button>'}<button data-a="logout">Salir</button><span class="mut">Fecha</span><input type="date" id="fecha" min="${INI}" max="${FIN}" value="${S.fecha}"></div></div>
     ${menu()}`;
     if(S.tab==='resumen'){let gu=0,gv=0,ge=0,gg=0,gd=0,gq=0,P={};
       const rows=pids.map(id=>{const p=S.puestos[id],t=totales(id),k=id+'_'+S.fecha,ex=!!S.regs[k];
@@ -428,6 +429,8 @@ document.addEventListener('change',e=>{const t=e.target;
 
 document.addEventListener('click',async e=>{
   const b=e.target.closest('[data-a]');if(!b)return;const a=b.dataset.a,pid=b.dataset.pid;
+  if(a==='verResp'){S.tab='puesto';S.vResp=true;if(!S.sel||!S.puestos[S.sel])S.sel=Object.keys(S.puestos)[0]||null;render(true);return}
+  if(a==='volverAdm'){S.vResp=false;S.tab='inicio';render(true);return}
   if(BLOQ_EN_LINEA.indexOf(a)>=0)return msg('No disponible en la versión en línea');
   try{
   if(a==='tab'){S.tab=b.dataset.t;render(true);if(S.tab==='bitacora')cargarBit()}
