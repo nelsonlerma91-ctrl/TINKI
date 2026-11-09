@@ -91,21 +91,37 @@ function quitar(r, p, c) {
 }
 
 // ---------- INGRESO ----------
-function pantallaLogin(err) {
+function pantallaLogin(err, modo) {
+  if (modo) S.modo = modo;
+  const titulo = S.modo === 'admin' ? 'Entrada de administrador' : 'Entrada de responsable de puesto';
   $('#app').innerHTML = `<div class="card" style="max-width:380px;margin:40px auto">
     <h1 style="text-align:center">Tinki Industry Jeans</h1>
-    <p class="mut" style="text-align:center;margin:4px 0 14px">Control de inventario</p>
+    <p class="mut" style="text-align:center;margin:4px 0 14px">${titulo}</p>
     <input id="lu" placeholder="Usuario" autocomplete="username" style="width:100%;margin-bottom:8px">
     <input id="lc" type="password" placeholder="Clave" autocomplete="current-password" style="width:100%">
     <div class="row" style="margin-top:10px"><button class="p" id="bl" style="flex:1">Entrar</button></div>
     <p class="bad" id="le" style="min-height:20px">${esc(err || '')}</p>
-    <p style="text-align:center;margin:6px 0 0"><span class="lk" id="cfg">Configurar servidor</span></p></div>`;
+    <p style="text-align:center;margin:6px 0 0"><span class="lk" id="volver">← Volver</span> · <span class="lk" id="cfg">Configurar servidor</span></p></div>`;
   $('#bl').onclick = entrar;
+  $('#volver').onclick = () => pantallaInicio();
   $('#lc').onkeydown = e => { if (e.key === 'Enter') entrar(); };
   $('#cfg').onclick = () => {
     const v = prompt('Dirección del servidor (la URL que termina en /exec):', serverUrl());
     if (v && v.trim()) { try { localStorage.setItem(URL_KEY, v.trim()); } catch (e) {} msg('Servidor guardado'); }
   };
+}
+
+function pantallaInicio(err) {
+  S.modo = null;
+  $('#app').innerHTML = `<div class="card" style="max-width:520px;margin:40px auto">
+    <h1 style="text-align:center">Tinki Industry Jeans</h1>
+    <p class="mut" style="text-align:center;margin:4px 0 18px">¿Dónde va a iniciar?</p>
+    <div class="row" style="flex-direction:column;align-items:stretch">
+      <button class="p" data-a="entrar_admin" style="padding:14px;text-align:left">Administrador<br><span style="font-weight:400;font-size:13px">Inventario completo, costos, resultados y puestos</span></button>
+      <button data-a="entrar_puesto" style="padding:14px;text-align:left">Responsable de puesto<br><span class="mut" style="font-size:13px">Registrar las ventas del día de su puesto</span></button>
+    </div>
+    <p class="bad" style="min-height:20px;text-align:center">${esc(err || '')}</p>
+  </div>`;
 }
 
 async function entrar() {
@@ -115,6 +131,8 @@ async function entrar() {
   try {
     const h = await hashClave(u, c);
     const d = await api({ accion: 'login', u, h });
+    if (S.modo === 'admin' && d.rol !== 'admin') throw new Error('Esta entrada es solo para el administrador. Use “Responsable de puesto”.');
+    if (S.modo === 'puesto' && d.rol === 'admin') throw new Error('Este usuario es administrador. Use la entrada de Administrador.');
     S.ses = { u, h };
     localStorage.setItem(SES_KEY, JSON.stringify(S.ses));
     aplicar(d);
@@ -133,7 +151,7 @@ async function entrarGuardada() {
   catch (e) {
     S.ses = null;
     if (/Autenticación/.test(e.message)) localStorage.removeItem(SES_KEY);
-    pantallaLogin(e.message);
+    pantallaInicio(e.message);
   }
 }
 
@@ -161,7 +179,7 @@ async function sincronizar() {
   } catch (e) {
     if (/Autenticación/.test(e.message)) {
       localStorage.removeItem(SES_KEY); S.ses = null; S.d = null;
-      pantallaLogin('Su acceso cambió. Entre de nuevo.');
+      pantallaInicio('Su acceso cambió. Entre de nuevo.');
     }
   }
 }
@@ -321,7 +339,9 @@ function recalcular() {
 
 // ---------- ACCIONES ----------
 const A = {
-  salir() { localStorage.removeItem(SES_KEY); S.ses = null; S.d = null; pantallaLogin(); },
+  entrar_admin() { location.href = 'admin.html'; },
+  entrar_puesto() { pantallaLogin(null, 'puesto'); },
+  salir() { localStorage.removeItem(SES_KEY); S.ses = null; S.d = null; pantallaInicio(); },
   tab(b) { S.tab = b.dataset.t; dibujar(); },
   entrega(b) { return accionEntrega(b.dataset.pid, 1); },
   restar(b) { return accionEntrega(b.dataset.pid, -1); },
@@ -415,7 +435,7 @@ document.addEventListener('input', e => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) sincronizar(); });
 
 // ---------- ARRANQUE ----------
-pantallaLogin();          // la pantalla de ingreso sale de inmediato
+pantallaInicio();         // primero se elige dónde entrar
 entrarGuardada();         // el ingreso automático corre en segundo plano
 setInterval(sincronizar, 10000);
 </script>
