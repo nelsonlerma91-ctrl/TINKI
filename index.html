@@ -157,12 +157,14 @@ async function entrarGuardada() {
 
 // ---------- DATOS ----------
 async function cargarPuesto(d) {
-  const cfg = await req('docget', { path: 'config/main' });
-  const regs = await req('docquery', { col: 'registros', where: [] });
+  const [cfg, regs, pu] = await Promise.all([
+    req('docget', { path: 'config/main' }),
+    req('docquery', { col: 'registros', where: [] }),
+    req('docget', { path: 'puestos/' + d.puesto })
+  ]);
   d.catalogo = (cfg.data && cfg.data.prods) || [];
   d.registros = {};
   regs.docs.forEach(x => { d.registros['registros/' + x.id] = x.data; });
-  const pu = await req('docget', { path: 'puestos/' + d.puesto });
   if (pu.data) d.puestos = Object.assign({}, d.puestos, { [d.puesto]: pu.data });
   return d;
 }
