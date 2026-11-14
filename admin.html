@@ -84,7 +84,7 @@ function subRegs(){if(S.unsub)S.unsub();
 })();
 function aplicarSrv(d){
   if(d.rol!=='admin')throw new Error('Esta entrada es solo para el administrador. Use la entrada de responsables.');
-  S.admin=true;S.isAdm=true;S.acc={u:USUARIO_ADMIN,otros:[]};
+  S.admin=true;S.isAdm=true;S.acc=d.admins||{u:USUARIO_ADMIN,otros:[]};
   cacheFill(d);
   S.enPoder=d.enPoder||{};
   S.fecha=d.hoy;
@@ -100,6 +100,7 @@ function iniciarSubs(){
   S.db.doc('respaldo/ultimo').onSnapshot(s=>{S.resp=s.exists?s.data():null;render()},()=>{});
   S.db.doc('acceso/admin').onSnapshot(s=>{S.acc=s.exists?s.data():null;S.accOk=true;render()},()=>{S.accOk=true;render()});
   S.db.collection('pagos').onSnapshot(q=>{S.pagos=q.docs.map(d=>Object.assign({id:d.id},d.data()));render()},()=>{});
+  S.db.collection('bodega').onSnapshot(q=>{S.bodega=q.docs.map(d=>Object.assign({id:d.id},d.data()));render()},()=>{});
   S.db.doc('costos/main').onSnapshot(s=>{S.costos=(s.data()||{}).c||{};render()},()=>{});
   S.db.collection('puestos').onSnapshot(q=>{S.puestos={};q.docs.forEach(d=>S.puestos[d.id]=d.data());render()});
   subRegs();
@@ -159,6 +160,18 @@ function alertasCfgHtml(){
   const u=umbrales();
   return `<p class="mut" style="margin:0 0 8px">Se muestran avisos al entrar cuando un puesto supera estos límites.</p>
     <div class="row"><span>Saldo máximo sin alerta:</span><input type="number" min="0" id="alS" value="${u.saldo}" style="width:150px"><span>Días máximos sin pagar:</span><input type="number" min="0" id="alD" value="${u.dias}" style="width:90px"><button class="p" data-a="saveAlertas">Guardar alertas</button></div>`;
+}
+function stockBodega(){const m={};(S.bodega||[]).forEach(x=>{const c=+x.cantidad||0;m[x.producto]=(m[x.producto]||0)+(x.tipo==='salida'?-c:c)});return m}
+function bodegaHtml(pids){
+  const st=stockBodega(),movs=(S.bodega||[]).slice().sort((a,b)=>(a.fecha||'')<(b.fecha||'')?1:-1).slice(0,30);
+  return `<h2 style="margin-top:14px">Bodega</h2><p class="mut" style="margin:0 0 8px">Compras (entrada) y traslados a los puestos (salida). Es un registro aparte: no bloquea las entregas de los puestos.</p>
+  <div class="card"><div class="sc"><table><tr><th>Producto</th><th>En bodega</th></tr>${S.prods.map(x=>`<tr><td>${esc(x.nombre)}</td><td style="${(st[x.id]||0)<0?'color:var(--bad)':''}">${st[x.id]||0}</td></tr>`).join('')||'<tr><td colspan="2" class="mut">Sin productos</td></tr>'}</table></div></div>
+  <div class="card"><div class="row"><select id="bt"><option value="entrada">Entrada (compra)</option><option value="salida">Salida (traslado a puesto)</option></select>
+    <select id="bp">${S.prods.map(x=>`<option value="${x.id}">${esc(x.nombre)}</option>`).join('')}</select>
+    <input type="number" id="bc" min="1" placeholder="Cantidad" style="width:110px"><input type="date" id="bf" value="${hoy()}">
+    <select id="bpu"><option value="">(sin puesto)</option>${pids.map(id=>`<option value="${id}">${esc(S.puestos[id].nombre)}</option>`).join('')}</select>
+    <input id="bn" placeholder="Nota (proveedor, factura…)" style="flex:1;min-width:140px"><button class="p" data-a="regBodega">Registrar</button></div></div>
+  <div class="card"><b>Últimos movimientos</b>${movs.map(x=>`<div class="row" style="border-bottom:1px solid var(--bd);padding:6px 0"><span style="min-width:95px">${esc(x.fecha)}</span><span style="min-width:90px">${x.tipo==='salida'?'Salida':'Entrada'}</span><span style="flex:1">${esc(x.producto_nombre||'')} × ${x.cantidad}${x.puesto_nombre?' → '+esc(x.puesto_nombre):''}</span><span class="mut">${esc(x.nota||'')}</span></div>`).join('')||'<p class="mut" style="margin:6px 0 0">Sin movimientos.</p>'}</div>`;
 }
 function pprice(pid,x){const p=S.puestos[pid]&&S.puestos[pid].precios;return p&&p[x.id]!=null?p[x.id]:x.precio}
 function getRec(pid){const k=pid+'_'+S.fecha;if(S.regs[k])return JSON.parse(JSON.stringify(S.regs[k]));
@@ -230,24 +243,25 @@ async function srv(body){
   }
   return j;
 }
-const BLOQ_EN_LINEA=['setup','resetadm','reset','ejemplo','creardatos','addadm','deladm'];
+const BLOQ_EN_LINEA=['setup','resetadm','reset','ejemplo','creardatos'];
 const snapD=(p,d)=>({id:p.split('/').pop(),exists:d!=null,data:()=>d==null?undefined:JSON.parse(JSON.stringify(d))});
 // Paquete del servidor: llena la memoria de la página (una llamada para todo)
 function cacheFill(b){
   _hoy=b.hoy;S.enPoder=b.enPoder||{};
-  CACHE.doc={'config/main':b.config,'costos/main':b.costos,'respaldo/ultimo':b.respaldo||null};
+  CACHE.doc={'config/main':b.config,'costos/main':b.costos,'respaldo/ultimo':b.respaldo||null,'acceso/admin':b.admins};
   CACHE.col={
     puestos:Object.keys(b.puestos||{}).map(id=>({id,data:b.puestos[id]})),
     cierres:Object.keys(b.cierres||{}).map(id=>({id,data:b.cierres[id]})),
     gastos:(b.gastos||[]).map(g=>({id:g.id,data:g.data})),
     pagos:(b.pagos||[]),
+    bodega:(b.bodega||[]),
     registros:(b.regsList||[]),
     bitacora:(b.bitacora||[]).map((x,i)=>({id:'b'+i,data:{t:Date.parse(x.fecha),fecha:String(x.fecha||'').slice(0,10),quien:x.usuario,acc:x.texto}}))
   };
 }
 async function refrescarTodo(){const b=await srv({accion:'bundle'});cacheFill(b);notifyAll()}
 async function fetchDoc(p){
-  if(p==='acceso/admin')return{u:USUARIO_ADMIN,otros:[]};
+  if(p==='acceso/admin')return CACHE.doc['acceso/admin']||{u:USUARIO_ADMIN,otros:[]};
   if(p in CACHE.doc)return CACHE.doc[p];
   const r=await srv({accion:'docget',path:p});return r.exists?r.data:null;
 }
@@ -259,7 +273,7 @@ async function consulta(c,fl){
 }
 async function writeDoc(p,d,upd){
   if(p.indexOf('bitacora/')===0)return;
-  if(p==='acceso/admin'){if(d&&d.h&&d.u===USUARIO_ADMIN)await srv({accion:'cambiarclave',nh:d.h});return}
+  if(p==='acceso/admin'){if(d&&Array.isArray(d.otros))await srv({accion:'guardarAdmins',otros:d.otros.map(x=>x.h?{u:x.u,h:x.h}:{u:x.u})});if(d&&d.h&&d.u===USUARIO_ADMIN&&d.h!==(S.ses&&S.ses.h))await srv({accion:'cambiarclave',nh:d.h});await refrescarTodo();return}
   await srv({accion:upd?'docupdate':'docset',path:p,data:d});
   await refrescarTodo();
 }
@@ -333,7 +347,7 @@ async function cargarBit(){try{
 const MES=['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 const okf=(f,p)=>(!S.fy||f.slice(0,4)===S.fy)&&(!S.fm||f.slice(5,7)===S.fm)&&(!S.fp||p===S.fp);
 document.addEventListener('toggle',e=>{const d=e.target;if(d.dataset&&d.dataset.g){S.grp=S.grp||{};S.grp[d.dataset.g]=d.open}},true);
-function menu(){const G=[['Panel',[['inicio','Panel de control'],['resumen','Resumen del día']]],['Operación',[['puesto','Por puesto (entregas, cierre, arqueo)'],['cuentas','Cuentas por puesto']]],['Resultados',[['resultados','Estado de resultados y gastos']]],['Control',[['descuadres','Descuadres'],['bitacora','Bitácora'],['memoria','Memoria mensual']]],['Configuración',[['config','Productos, puestos y claves']]]];
+function menu(){const G=[['Panel',[['inicio','Panel de control'],['resumen','Resumen del día']]],['Operación',[['puesto','Por puesto (entregas, cierre, arqueo)'],['cuentas','Cuentas por puesto'],['bodega','Bodega']]],['Resultados',[['resultados','Estado de resultados y gastos']]],['Control',[['descuadres','Descuadres'],['bitacora','Bitácora'],['memoria','Memoria mensual']]],['Configuración',[['config','Productos, puestos y claves']]]];
   return'<div class="side">'+G.map(g=>`<details data-g="${g[0]}" ${(S.grp||{})[g[0]]!==false?'open':''}><summary>${g[0]}</summary>${g[1].map(t=>`<button data-a="tab" data-t="${t[0]}" class="${S.tab===t[0]?'on':''}">${t[1]}</button>`).join('')}</details>`).join('')+'</div>'}
 function ventaRec(r){let v=0;S.prods.forEach(x=>{v+=((r.inicial[x.id]||0)+entOf(r,x.id)-((r.final||{})[x.id]||0))*((r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:x.precio)});return v}
 function svgDias(R){if(!R.length)return'<p class="mut">Sin ventas cerradas en el periodo.</p>';
@@ -397,7 +411,7 @@ function resultados(mes){const R={},C={},G={};let vt=0,ct=0,gt=0;
     const pr=(r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:x.precio,co=S.costos[x.id]||0;R[x.id]=(R[x.id]||0)+s*pr;C[x.id]=(C[x.id]||0)+s*co;vt+=s*pr;ct+=s*co}));
   (S.gas||[]).filter(g=>g.fecha.slice(0,7)===mes).forEach(g=>{G[g.concepto]=(G[g.concepto]||0)+g.monto;gt+=g.monto});
   return{R,C,G,vt,ct,gt}}
-const esAdmin=s=>!!(s&&S.acc&&S.acc.u===s.u);
+const esAdmin=s=>!!(s&&S.acc&&(S.acc.u===s.u||(S.acc.otros||[]).some(a=>a.u===s.u)));
 const nomAdmin=u=>!!(S.acc&&(S.acc.u===u||(S.acc.otros||[]).some(a=>a.u===u)));
 async function hash(u,c){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('inv|'+u+'|'+c));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
 function yes(t){return new Promise(r=>{const d=document.createElement('div');d.style.cssText='position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:20;padding:16px';d.innerHTML='<div class="card" style="max-width:340px;margin:0"><p style="margin-top:0"></p><div class="row" style="justify-content:flex-end"><button data-n>Cancelar</button><button class="p" data-y>Aceptar</button></div></div>';d.querySelector('p').textContent=t;d.onclick=e=>{const y=e.target.dataset.y!==undefined;if(y||e.target.dataset.n!==undefined||e.target===d){d.remove();r(y)}};document.body.appendChild(d)})}
@@ -448,6 +462,7 @@ function draw0(){
     if(S.tab==='memoria')h+=memHtml();
     if(S.tab==='bitacora'){const f=(S.bf||'').toLowerCase(),fl=(S.bit||[]).filter(r=>!f||r.join(' ').toLowerCase().includes(f));
       h+=`<div class="row" style="margin-bottom:10px"><input id="bf" placeholder="Filtrar (usuario, acción, día)" value="${esc(S.bf||'')}" style="flex:1;min-width:160px"><button data-a="bitact">Actualizar</button></div><div class="card"><b>Bitácora</b> <span class="mut">(últimos 300 movimientos, el más reciente arriba)</span><div class="sc"><table><thead><tr><th>Fecha y hora</th><th>Día</th><th>Quién</th><th>Acción</th></tr></thead><tbody>${fl.map(r=>`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td style="text-align:left;white-space:normal">${esc(r[3])}</td></tr>`).join('')||'<tr><td colspan="4" class="mut">Sin movimientos.</td></tr>'}</tbody></table></div></div>`}
+    if(S.tab==='bodega')h+=bodegaHtml(pids);
     if(S.tab==='cuentas')h+=pagosHtml(pids)+corteHtml(pids);
     if(S.tab==='resultados'){const mes=S.mes||S.fecha.slice(0,7),X=resultados(mes),pc=(v,t)=>t?Math.round(v/t*100)+'%':'0%',
       row=(n,v,t,b)=>`<tr${b?' style="font-weight:700"':''}><td>${esc(n)}</td><td>${money(v)}</td><td>${pc(v,t)}</td></tr>`;
@@ -581,6 +596,7 @@ document.addEventListener('click',async e=>{
   else if(a==='pagoTotal'){const pid=S.pagoSel,c=cuenta(pid);if(!(c.deb>0))return msg('No hay saldo pendiente');if(!(await yes('¿Registrar pago de '+money(c.deb)+' como saldo completo?')))return;await S.db.collection('pagos').add({pid,fecha:hoy(),monto:Math.round(c.deb),nota:'Saldo completo'});log('Registró pago de saldo completo de '+money(c.deb)+' de '+S.puestos[pid].nombre);msg('Saldo marcado como pagado')}
   else if(a==='iniciarCero'){const f=$('#cfe').value||hoy(),ini={};document.querySelectorAll('[data-cor]').forEach(i=>{const v=parseInt(i.value,10);if(v>0)ini[i.dataset.cor]=v});if(!(await yes('¿Empezar de cero con '+f+' para '+S.puestos[pid].nombre+'? Lo anterior deja de afectar los saldos.')))return;await S.db.doc('puestos/'+pid).update({corte:{fecha:f,inicial:ini},stock:ini});log('Empezó de cero '+S.puestos[pid].nombre+' desde '+f);msg('Inicio de operación guardado')}
   else if(a==='saveAlertas'){const s=parseFloat($('#alS').value),d=parseInt($('#alD').value,10);if(!(s>=0)||!(d>=0))return msg('Escribe valores válidos');await S.db.doc('config/main').update({alertas:{saldo:s,dias:d}});log('Cambió los límites de alertas');msg('Alertas guardadas')}
+  else if(a==='regBodega'){const tipo=$('#bt').value,pr=$('#bp').value,c=parseInt($('#bc').value,10),f=$('#bf').value||hoy(),pu=$('#bpu').value,n=($('#bn').value||'').trim();if(!(c>0))return msg('Escribe la cantidad');const prod=S.prods.find(x=>x.id===pr)||{};await S.db.collection('bodega').add({tipo,fecha:f,producto:pr,producto_nombre:prod.nombre||'',cantidad:c,pid:pu,puesto_nombre:pu&&S.puestos[pu]?S.puestos[pu].nombre:'',nota:n});msg(tipo==='salida'?'Traslado registrado':'Entrada registrada')}
   else if(a==='savePrecios'){const pr={};document.querySelectorAll('[data-pp]').forEach(i=>{if(i.value!=='')pr[i.dataset.pp]=+i.value});await S.db.doc('puestos/'+S.ppSel).update({precios:pr});log('Precios del puesto '+S.puestos[S.ppSel].nombre);msg('Precios guardados')}
   else if(a==='clave'){const c=$('#nc_'+pid).value,p=S.puestos[pid];if(c.length<4||!p.usr)return msg('Clave de mínimo 4 caracteres (y el puesto debe tener usuario)');
     await S.db.doc('puestos/'+pid).update({h:await hash(p.usr,c)});log('Cambió la clave de '+p.nombre);msg('Clave actualizada')}
