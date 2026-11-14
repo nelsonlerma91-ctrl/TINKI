@@ -93,7 +93,7 @@ function aplicarSrv(d){
 let _subsOk=false;
 function iniciarSubs(){
   if(_subsOk)return;_subsOk=true;
-  S.db.doc('config/main').onSnapshot(s=>{S.prods=(s.data()||{}).prods||[];render()});
+  S.db.doc('config/main').onSnapshot(s=>{S.prods=(s.data()||{}).prods||[];S.alertas=(s.data()||{}).alertas||{};render()});
   S.db.collection('registros').onSnapshot(q=>{S.all=q.docs.map(d=>d.data());render()},()=>{});
   S.db.collection('gastos').onSnapshot(q=>{S.gas=q.docs.map(d=>Object.assign({id:d.id},d.data()));render()},()=>{});
   S.db.collection('cierres').onSnapshot(q=>{S.cierres={};q.docs.forEach(d=>S.cierres[d.id]=d.data());render()},()=>{});
@@ -136,6 +136,29 @@ function corteHtml(pids){
     <div class="row" style="margin-bottom:8px"><span>Fecha de inicio:</span><input type="date" id="cfe" value="${c?c.fecha:hoy()}"></div>
     ${S.prods.map(x=>`<div class="row" style="margin-bottom:6px"><span style="flex:1;min-width:140px">${esc(x.nombre)}</span><input type="number" min="0" data-cor="${x.id}" value="${c&&c.inicial&&c.inicial[x.id]!=null?c.inicial[x.id]:''}" placeholder="0" style="width:110px"></div>`).join('')}
     <div class="row" style="margin-top:8px"><button class="p" data-a="iniciarCero" data-pid="${sel}">Empezar de cero con este inventario</button></div></div>`;
+}
+function umbrales(){const a=S.alertas||{};return{saldo:a.saldo!=null?+a.saldo:500000,dias:a.dias!=null?+a.dias:7}}
+function alertasHtml(){
+  if(!S.puestos||!Object.keys(S.puestos).length)return '';
+  const u=umbrales(),hoyS=hoy(),msgs=[];
+  Object.keys(S.puestos).forEach(pid=>{
+    const nom=S.puestos[pid].nombre||pid,c=cuenta(pid),cf=(S.puestos[pid].corte&&S.puestos[pid].corte.fecha)||'';
+    if(c.deb>u.saldo)msgs.push(`<b>${esc(nom)}</b> debe ${money(c.deb)}, más del límite de ${money(u.saldo)}.`);
+    if(c.deb>0){
+      const pagos=(S.pagos||[]).filter(x=>x.pid===pid&&(x.fecha||'')>=cf).map(x=>x.fecha).sort();
+      const ref=pagos.length?pagos[pagos.length-1]:(cf||'');
+      if(ref){const dias=Math.floor((Date.parse(hoyS)-Date.parse(ref))/86400000);if(dias>u.dias)msgs.push(`<b>${esc(nom)}</b> no ha pagado desde ${esc(ref)} (${dias} días).`);}
+    }
+    const abiertos=(S.all||[]).filter(r=>r.pid===pid&&!r.cerrado&&r.fecha<hoyS&&r.fecha>=cf&&Object.values(r.parcial||{}).some(v=>v>0)).map(r=>r.fecha).sort();
+    if(abiertos.length)msgs.push(`<b>${esc(nom)}</b> tiene ventas sin cerrar desde ${esc(abiertos[0])} (${abiertos.length} día(s)).`);
+  });
+  if(!msgs.length)return '';
+  return `<div class="card" style="border-color:var(--ac);margin-bottom:12px"><b>Alertas</b><ul style="margin:6px 0 0 18px;padding:0">${msgs.map(m=>`<li style="margin:4px 0">${m}</li>`).join('')}</ul></div>`;
+}
+function alertasCfgHtml(){
+  const u=umbrales();
+  return `<p class="mut" style="margin:0 0 8px">Se muestran avisos al entrar cuando un puesto supera estos límites.</p>
+    <div class="row"><span>Saldo máximo sin alerta:</span><input type="number" min="0" id="alS" value="${u.saldo}" style="width:150px"><span>Días máximos sin pagar:</span><input type="number" min="0" id="alD" value="${u.dias}" style="width:90px"><button class="p" data-a="saveAlertas">Guardar alertas</button></div>`;
 }
 function pprice(pid,x){const p=S.puestos[pid]&&S.puestos[pid].precios;return p&&p[x.id]!=null?p[x.id]:x.precio}
 function getRec(pid){const k=pid+'_'+S.fecha;if(S.regs[k])return JSON.parse(JSON.stringify(S.regs[k]));
@@ -445,9 +468,10 @@ function draw0(){
       ${S.prods.length?'':'<p style="margin-bottom:0"><a class="lk" data-a="ejemplo">Cargar catálogo Tinki (Drill Tinki, DKD, Gimaos, Crash, Clásico, Bermuda Jean)</a></p>'}</div>
       <h2>Puestos y responsables</h2><div class="card">${pids.map(id=>{const p=S.puestos[id];return`<div class="row" style="margin-bottom:6px"><span style="flex:1;min-width:140px"><b>${esc(p.nombre)}</b> · ${esc(p.resp||'')} <span class="mut">usuario: ${esc(p.usr||'(sin usuario, recréalo)')}</span></span><input id="nc_${id}" type="password" placeholder="Nueva clave" style="width:130px"><button data-a="clave" data-pid="${id}">Cambiar clave</button><button class="d" data-a="delpuesto" data-pid="${id}">Eliminar</button></div>`}).join('')||'<p class="mut" style="margin-top:0">Sin puestos.</p>'}
       <div class="row" style="margin-top:8px"><input id="qn" placeholder="Nombre del puesto" style="flex:1;min-width:130px"><input id="qr" placeholder="Responsable" style="flex:1;min-width:130px"><input id="qu" placeholder="Usuario" style="width:110px"><input id="qp" type="password" placeholder="Clave" style="width:110px"><button class="p" data-a="addpuesto">Crear</button></div></div>
+      <h2>Alertas</h2><div class="card">${alertasCfgHtml()}</div>
       <h2>Precios por puesto</h2><div class="card">${precHtml(pids)}</div>
       <h2>Mi acceso (administrador)</h2><div class="card"><div class="row"><span>Usuario: <b>${esc(S.ses.u)}</b></span><input id="ac" type="password" placeholder="Nueva clave" style="width:150px"><button data-a="cambiaradm">Cambiar clave</button></div><p class="mut" style="margin:12px 0 6px">Administradores</p>${[S.acc.u].concat((S.acc.otros||[]).map(a=>a.u)).map((x,i)=>`<div class="row" style="margin-bottom:6px"><span style="flex:1;min-width:110px"><b>${esc(x)}</b>${x===S.ses.u?' (tú)':''}</span><input id="nca_${i}" type="password" placeholder="Nueva clave" style="width:130px"><button data-a="claveadm" data-u="${esc(x)}" data-i="${i}">Cambiar clave</button>${i>0&&x!==S.ses.u?`<button class="d" data-a="deladm" data-u="${esc(x)}">Quitar</button>`:''}</div>`).join('')}<div class="row"><input id="nu" placeholder="Usuario del otro admin" style="flex:1;min-width:130px"><input id="np2" type="password" placeholder="Clave" style="width:120px"><button data-a="addadm">Agregar administrador</button></div></div>${MODO_PRUEBAS?'<h2>Pruebas</h2><div class="card"><p class="mut" style="margin-top:0">Borra los datos de prueba antes de empezar con datos reales.</p><button class="d" data-a="reset">Borrar datos de prueba</button></div>':''}`;
-    A.className='adm';A.innerHTML=h;return}
+    A.className='adm';A.innerHTML=alertasHtml()+h;return}
   /* responsable */
   const p=S.me&&S.puestos[S.me];
   if(S.me&&S.fecha!==hoy()&&hoy()>=INI&&hoy()<=FIN){S.fecha=hoy();subRegs()}
@@ -556,6 +580,7 @@ document.addEventListener('click',async e=>{
   else if(a==='delPago'){if(!(await yes('¿Quitar este pago?')))return;await S.db.collection('pagos').doc(b.dataset.id).delete();log('Quitó un pago');msg('Pago quitado')}
   else if(a==='pagoTotal'){const pid=S.pagoSel,c=cuenta(pid);if(!(c.deb>0))return msg('No hay saldo pendiente');if(!(await yes('¿Registrar pago de '+money(c.deb)+' como saldo completo?')))return;await S.db.collection('pagos').add({pid,fecha:hoy(),monto:Math.round(c.deb),nota:'Saldo completo'});log('Registró pago de saldo completo de '+money(c.deb)+' de '+S.puestos[pid].nombre);msg('Saldo marcado como pagado')}
   else if(a==='iniciarCero'){const f=$('#cfe').value||hoy(),ini={};document.querySelectorAll('[data-cor]').forEach(i=>{const v=parseInt(i.value,10);if(v>0)ini[i.dataset.cor]=v});if(!(await yes('¿Empezar de cero con '+f+' para '+S.puestos[pid].nombre+'? Lo anterior deja de afectar los saldos.')))return;await S.db.doc('puestos/'+pid).update({corte:{fecha:f,inicial:ini},stock:ini});log('Empezó de cero '+S.puestos[pid].nombre+' desde '+f);msg('Inicio de operación guardado')}
+  else if(a==='saveAlertas'){const s=parseFloat($('#alS').value),d=parseInt($('#alD').value,10);if(!(s>=0)||!(d>=0))return msg('Escribe valores válidos');await S.db.doc('config/main').update({alertas:{saldo:s,dias:d}});log('Cambió los límites de alertas');msg('Alertas guardadas')}
   else if(a==='savePrecios'){const pr={};document.querySelectorAll('[data-pp]').forEach(i=>{if(i.value!=='')pr[i.dataset.pp]=+i.value});await S.db.doc('puestos/'+S.ppSel).update({precios:pr});log('Precios del puesto '+S.puestos[S.ppSel].nombre);msg('Precios guardados')}
   else if(a==='clave'){const c=$('#nc_'+pid).value,p=S.puestos[pid];if(c.length<4||!p.usr)return msg('Clave de mínimo 4 caracteres (y el puesto debe tener usuario)');
     await S.db.doc('puestos/'+pid).update({h:await hash(p.usr,c)});log('Cambió la clave de '+p.nombre);msg('Clave actualizada')}
