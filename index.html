@@ -47,7 +47,7 @@ const $ = s => document.querySelector(s);
 const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pesos = n => '$' + Math.round(Number(n) || 0).toLocaleString('es-CO');
 const clon = o => JSON.parse(JSON.stringify(o));
-const serverUrl = () => { try { return localStorage.getItem(URL_KEY) || API_URL_FIJA; } catch (e) { return API_URL_FIJA; } };
+const serverUrl = () => API_URL_FIJA;
 const cabecera = (t, extra) => `<div class="top"><div><h1>${esc(t)}</h1><span class="mut" style="font-size:13px">Tinki Industry Jeans · Control de inventario</span></div><div class="row">${extra || ''}</div></div>`;
 
 let _mt = null;
@@ -61,7 +61,7 @@ const hashClave = (u, c) => sha('inv|' + u + '|' + c);
 
 async function api(body) {
   const url = serverUrl();
-  if (!url || url.indexOf('PEGUE-AQUI') === 0) throw new Error('Falta configurar la dirección del servidor (Configurar servidor).');
+  if (!url || url.indexOf('PEGUE-AQUI') === 0) throw new Error('Falta configurar la dirección del servidor. Avise al administrador.');
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 25000);
   try {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body), signal: ctl.signal });
@@ -101,13 +101,9 @@ function pantallaLogin(err, modo) {
     <input id="lc" type="password" placeholder="Clave" autocomplete="current-password" style="width:100%">
     <div class="row" style="margin-top:10px"><button class="p" id="bl" style="flex:1">Entrar</button></div>
     <p class="bad" id="le" style="min-height:20px">${esc(err || '')}</p>
-    <p style="text-align:center;margin:6px 0 0"><span class="lk" id="cfg">Configurar servidor</span></p></div>`;
+    </div>`;
   $('#bl').onclick = entrar;
   $('#lc').onkeydown = e => { if (e.key === 'Enter') entrar(); };
-  $('#cfg').onclick = () => {
-    const v = prompt('Dirección del servidor (la URL que termina en /exec):', serverUrl());
-    if (v && v.trim()) { try { localStorage.setItem(URL_KEY, v.trim()); } catch (e) {} msg('Servidor guardado'); }
-  };
 }
 
 function pantallaInicio(err) {
