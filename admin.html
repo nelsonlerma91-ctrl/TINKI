@@ -98,6 +98,7 @@ function iniciarSubs(){
   S.db.collection('cierres').onSnapshot(q=>{S.cierres={};q.docs.forEach(d=>S.cierres[d.id]=d.data());render()},()=>{});
   S.db.doc('respaldo/ultimo').onSnapshot(s=>{S.resp=s.exists?s.data():null;render()},()=>{});
   S.db.doc('acceso/admin').onSnapshot(s=>{S.acc=s.exists?s.data():null;S.accOk=true;render()},()=>{S.accOk=true;render()});
+  S.db.collection('pagos').onSnapshot(q=>{S.pagos=q.docs.map(d=>Object.assign({id:d.id},d.data()));render()},()=>{});
   S.db.doc('costos/main').onSnapshot(s=>{S.costos=(s.data()||{}).c||{};render()},()=>{});
   S.db.collection('puestos').onSnapshot(q=>{S.puestos={};q.docs.forEach(d=>S.puestos[d.id]=d.data());render()});
   subRegs();
@@ -111,6 +112,20 @@ function precHtml(pids){
   return `<div class="row" style="margin-bottom:8px"><select id="ppsel">${pids.map(id=>`<option value="${id}" ${id===S.ppSel?'selected':''}>${esc(S.puestos[id].nombre)}</option>`).join('')}</select><span class="mut">Vacío = precio general</span></div>`+
     S.prods.map(x=>`<div class="row" style="margin-bottom:6px"><span style="flex:1;min-width:140px">${esc(x.nombre)}</span><span class="mut">general ${x.precio}</span><input type="number" min="0" data-pp="${x.id}" value="${pr[x.id]!=null?pr[x.id]:''}" placeholder="${x.precio}" style="width:110px"></div>`).join('')+
     `<div class="row"><button class="p" data-a="savePrecios">Guardar precios de este puesto</button></div>`;
+}
+function pagosHtml(pids){
+  if(!pids.length)return '';
+  const sel=(S.pagoSel&&S.puestos[S.pagoSel])?S.pagoSel:pids[0];S.pagoSel=sel;
+  const lista=(S.pagos||[]).filter(x=>x.pid===sel).sort((a,b)=>a.fecha<b.fecha?1:-1);
+  const c=cuenta(sel),nAbiertos=(S.all||[]).filter(r=>r.pid===sel&&!r.cerrado&&Object.values(r.parcial||{}).some(v=>v>0)).length;
+  const estado=c.deb>0?`<span class="wa"><b>Pendiente: le debe ${money(c.deb)}</b></span>`:(c.deb<0?`<span class="ok"><b>Pagado. A favor: ${money(-c.deb)}</b></span>`:'<span class="ok"><b>Pagado al día</b></span>');
+  const resumen=`<div class="card"><div class="row" style="justify-content:space-between"><b>${esc(S.puestos[sel].nombre)}</b>${estado}</div>
+    <div class="row mut" style="margin-top:6px;gap:18px"><span>Vendido (días cerrados): <b>${money(c.venta)}</b></span><span>Pagado: <b>${money(c.efe)}</b></span><span>Arqueo: <b>${money(c.arq)}</b></span></div>
+    ${nAbiertos?`<p class="wa" style="margin:8px 0 0">Hay ${nAbiertos} día(s) con ventas sin cerrar. No cuentan en el saldo hasta que se cierren.</p>`:''}
+    ${c.deb>0?`<div class="row" style="margin-top:10px"><button class="p" data-a="pagoTotal">Marcar pagado (saldo completo: ${money(c.deb)})</button></div>`:''}</div>`;
+  return `<h2 style="margin-top:14px">Estado de cuenta y pagos</h2>${resumen}<div class="card"><div class="row" style="margin-bottom:8px"><select id="pgsel">${pids.map(id=>`<option value="${id}" ${id===sel?'selected':''}>${esc(S.puestos[id].nombre)}</option>`).join('')}</select></div>
+    <div class="row"><input type="date" id="pgf" value="${hoy()}"><input type="number" id="pgm" min="0" placeholder="Monto recibido" style="width:150px"><input id="pgn" placeholder="Nota (opcional)" style="flex:1;min-width:140px"><button class="p" data-a="regPago">Registrar pago</button></div>
+    <div style="margin-top:10px">${lista.length?lista.map(x=>`<div class="row" style="border-bottom:1px solid var(--bd);padding:6px 0"><span style="min-width:100px">${esc(x.fecha)}</span><b style="min-width:120px">${money(x.monto)}</b><span class="mut" style="flex:1">${esc(x.nota||'')}</span><button class="d" data-a="delPago" data-id="${x.id}">Quitar</button></div>`).join(''):'<p class="mut" style="margin:0">Sin pagos registrados para este puesto.</p>'}</div></div>`;
 }
 function pprice(pid,x){const p=S.puestos[pid]&&S.puestos[pid].precios;return p&&p[x.id]!=null?p[x.id]:x.precio}
 function getRec(pid){const k=pid+'_'+S.fecha;if(S.regs[k])return JSON.parse(JSON.stringify(S.regs[k]));
@@ -192,6 +207,7 @@ function cacheFill(b){
     puestos:Object.keys(b.puestos||{}).map(id=>({id,data:b.puestos[id]})),
     cierres:Object.keys(b.cierres||{}).map(id=>({id,data:b.cierres[id]})),
     gastos:(b.gastos||[]).map(g=>({id:g.id,data:g.data})),
+    pagos:(b.pagos||[]),
     registros:(b.regsList||[]),
     bitacora:(b.bitacora||[]).map((x,i)=>({id:'b'+i,data:{t:Date.parse(x.fecha),fecha:String(x.fecha||'').slice(0,10),quien:x.usuario,acc:x.texto}}))
   };
@@ -364,8 +380,9 @@ function resumenResp(pid){const r=getRec(pid),cl=r.cerrado;let u=0,v=0;
   return`<div class="card"><div class="mut">${cl?'Te quedan (cierre de hoy)':'Inventario que tienes hoy'}</div><div class="big">${u} unidades</div><div>${li}</div><div class="mut" style="margin-top:6px">Valor al precio de liquidación: ${money(v)}</div>${c.deb>0?`<p class="wa" style="margin:10px 0 0">Saldo pendiente de días cerrados: <b>${money(c.deb)}</b></p>`:''}</div>`}
 function cuenta(pid,recs){const p=S.puestos[pid]||{},oe={};let venta=0,efe=0,arq=0;
   (recs||S.all||[]).filter(r=>r.pid===pid).forEach(r=>{
-    if(r.cerrado){S.prods.forEach(x=>{const s=(r.inicial[x.id]||0)+entOf(r,x.id)-((r.final||{})[x.id]||0),pr=(r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:x.precio;venta+=s*pr});if(r.liquidado)efe+=r.efectivo||0;arq+=arqVal(r)}
+    if(r.cerrado){S.prods.forEach(x=>{const s=(r.inicial[x.id]||0)+entOf(r,x.id)-((r.final||{})[x.id]||0),pr=(r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:x.precio;venta+=s*pr});arq+=arqVal(r)}
     else S.prods.forEach(x=>{oe[x.id]=(oe[x.id]||0)+entOf(r,x.id)})});
+  (S.pagos||[]).forEach(x=>{if(x.pid===pid)efe+=+x.monto||0});
   let st=0,val=0;S.prods.forEach(x=>{const n=((p.stock||{})[x.id]||0)+(oe[x.id]||0);st+=n;val+=n*pprice(pid,x)});
   return{st,val,venta,efe,arq,deb:venta-efe-arq}}
 function draw(){const keep={};document.querySelectorAll('[data-ven]').forEach(i=>{if(i.value!=='')keep[i.dataset.ven]=i.value});draw0();document.querySelectorAll('[data-ven]').forEach(i=>{if(keep[i.dataset.ven]!=null)i.value=keep[i.dataset.ven]});calc()}
@@ -397,6 +414,7 @@ function draw0(){
     if(S.tab==='memoria')h+=memHtml();
     if(S.tab==='bitacora'){const f=(S.bf||'').toLowerCase(),fl=(S.bit||[]).filter(r=>!f||r.join(' ').toLowerCase().includes(f));
       h+=`<div class="row" style="margin-bottom:10px"><input id="bf" placeholder="Filtrar (usuario, acción, día)" value="${esc(S.bf||'')}" style="flex:1;min-width:160px"><button data-a="bitact">Actualizar</button></div><div class="card"><b>Bitácora</b> <span class="mut">(últimos 300 movimientos, el más reciente arriba)</span><div class="sc"><table><thead><tr><th>Fecha y hora</th><th>Día</th><th>Quién</th><th>Acción</th></tr></thead><tbody>${fl.map(r=>`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td style="text-align:left;white-space:normal">${esc(r[3])}</td></tr>`).join('')||'<tr><td colspan="4" class="mut">Sin movimientos.</td></tr>'}</tbody></table></div></div>`}
+    if(S.tab==='cuentas')h+=pagosHtml(pids);
     if(S.tab==='resultados'){const mes=S.mes||S.fecha.slice(0,7),X=resultados(mes),pc=(v,t)=>t?Math.round(v/t*100)+'%':'0%',
       row=(n,v,t,b)=>`<tr${b?' style="font-weight:700"':''}><td>${esc(n)}</td><td>${money(v)}</td><td>${pc(v,t)}</td></tr>`;
       const ing=S.prods.filter(x=>X.R[x.id]).map(x=>row(x.nombre,X.R[x.id],X.vt)).join(''),cos=S.prods.filter(x=>X.C[x.id]).map(x=>row('Costo '+x.nombre,X.C[x.id],X.vt)).join(''),gas=Object.keys(X.G).map(k=>row(k,X.G[k],X.vt)).join('');
@@ -443,7 +461,7 @@ async function exportar(){
   l.docs.map(d=>d.data()).sort((a,b)=>a.t-b.t).forEach(g=>o.push([new Date(g.t).toLocaleString('es-CO'),g.fecha,g.quien,g.acc].map(c).join(';')));
   await dl.save({filename:'respaldo-inventario-'+hoy()+'.csv',data:'\ufeff'+o.join('\n')});await S.db.doc('respaldo/ultimo').set({t:Date.now()});log('Descargó el respaldo');msg('Respaldo guardado. Envíalo a arroyavesantiago80@gmail.com');
 }
-document.addEventListener('change',e=>{if(e.target.id==='ppsel'){S.ppSel=e.target.value;render(true);return}const t=e.target;
+document.addEventListener('change',e=>{if(e.target.id==='pgsel'){S.pagoSel=e.target.value;render(true);return}if(e.target.id==='ppsel'){S.ppSel=e.target.value;render(true);return}const t=e.target;
   if(t.id==='fecha'&&t.value){S.fecha=t.value;subRegs();render(true)}
   if(t.id==='selp'){S.sel=t.value;render(true)}
   if(t.id==='mes'&&t.value){S.mes=t.value;render(true)}
@@ -523,6 +541,9 @@ document.addEventListener('click',async e=>{
     const acc=JSON.parse(JSON.stringify(S.acc));acc.otros=(acc.otros||[]).concat([{u,h:await hash(u,c)}]);await S.db.doc('acceso/admin').set(acc);log('Agregó al administrador '+u);msg('Administrador agregado')}
   else if(a==='cambiaradm'){const c=$('#ac').value;if(c.length<4)return msg('La clave debe tener mínimo 4 caracteres');
     const u=S.ses.u,h=await hash(u,c),acc=JSON.parse(JSON.stringify(S.acc));if(acc.u===u)acc.h=h;else(acc.otros||[]).forEach(x=>{if(x.u===u)x.h=h});await S.db.doc('acceso/admin').set(acc);S.ses={u,h};try{localStorage.setItem('inv_ses',JSON.stringify(S.ses))}catch(x){}msg('Clave actualizada')}
+  else if(a==='regPago'){const pid=S.pagoSel,m=parseFloat($('#pgm').value),f=$('#pgf').value||hoy(),n=($('#pgn').value||'').trim();if(!(m>0))return msg('Escribe el monto recibido');await S.db.collection('pagos').add({pid,fecha:f,monto:m,nota:n});log('Registró pago de '+money(m)+' de '+S.puestos[pid].nombre);msg('Pago registrado')}
+  else if(a==='delPago'){if(!(await yes('¿Quitar este pago?')))return;await S.db.collection('pagos').doc(b.dataset.id).delete();log('Quitó un pago');msg('Pago quitado')}
+  else if(a==='pagoTotal'){const pid=S.pagoSel,c=cuenta(pid);if(!(c.deb>0))return msg('No hay saldo pendiente');if(!(await yes('¿Registrar pago de '+money(c.deb)+' como saldo completo?')))return;await S.db.collection('pagos').add({pid,fecha:hoy(),monto:Math.round(c.deb),nota:'Saldo completo'});log('Registró pago de saldo completo de '+money(c.deb)+' de '+S.puestos[pid].nombre);msg('Saldo marcado como pagado')}
   else if(a==='savePrecios'){const pr={};document.querySelectorAll('[data-pp]').forEach(i=>{if(i.value!=='')pr[i.dataset.pp]=+i.value});await S.db.doc('puestos/'+S.ppSel).update({precios:pr});log('Precios del puesto '+S.puestos[S.ppSel].nombre);msg('Precios guardados')}
   else if(a==='clave'){const c=$('#nc_'+pid).value,p=S.puestos[pid];if(c.length<4||!p.usr)return msg('Clave de mínimo 4 caracteres (y el puesto debe tener usuario)');
     await S.db.doc('puestos/'+pid).update({h:await hash(p.usr,c)});log('Cambió la clave de '+p.nombre);msg('Clave actualizada')}
