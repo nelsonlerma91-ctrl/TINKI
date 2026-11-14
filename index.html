@@ -93,7 +93,7 @@ function quitar(r, p, c) {
 // ---------- INGRESO ----------
 function pantallaLogin(err, modo) {
   if (modo) S.modo = modo;
-  const titulo = S.modo === 'admin' ? 'Entrada de administrador' : 'Entrada de responsable de puesto';
+  const titulo = 'Ingrese su usuario y clave';
   $('#app').innerHTML = `<div class="card" style="max-width:380px;margin:40px auto">
     <h1 style="text-align:center">Tinki Industry Jeans</h1>
     <p class="mut" style="text-align:center;margin:4px 0 14px">${titulo}</p>
@@ -101,9 +101,8 @@ function pantallaLogin(err, modo) {
     <input id="lc" type="password" placeholder="Clave" autocomplete="current-password" style="width:100%">
     <div class="row" style="margin-top:10px"><button class="p" id="bl" style="flex:1">Entrar</button></div>
     <p class="bad" id="le" style="min-height:20px">${esc(err || '')}</p>
-    <p style="text-align:center;margin:6px 0 0"><span class="lk" id="volver">← Volver</span> · <span class="lk" id="cfg">Configurar servidor</span></p></div>`;
+    <p style="text-align:center;margin:6px 0 0"><span class="lk" id="cfg">Configurar servidor</span></p></div>`;
   $('#bl').onclick = entrar;
-  $('#volver').onclick = () => pantallaInicio();
   $('#lc').onkeydown = e => { if (e.key === 'Enter') entrar(); };
   $('#cfg').onclick = () => {
     const v = prompt('Dirección del servidor (la URL que termina en /exec):', serverUrl());
@@ -151,7 +150,7 @@ async function entrarGuardada() {
   catch (e) {
     S.ses = null;
     if (/Autenticación/.test(e.message)) localStorage.removeItem(SES_KEY);
-    pantallaInicio(e.message);
+    pantallaLogin(e.message, 'puesto');
   }
 }
 
@@ -190,7 +189,7 @@ async function sincronizar() {
   } catch (e) {
     if (/Autenticación/.test(e.message)) {
       localStorage.removeItem(SES_KEY); S.ses = null; S.d = null;
-      pantallaInicio('Su acceso cambió. Entre de nuevo.');
+      pantallaLogin('Su acceso cambió. Entre de nuevo.', 'puesto');
     }
   }
 }
@@ -311,10 +310,11 @@ function dibujarPuesto(d) {
   let tot = 0;
   const filas = d.catalogo.map(x => {
     const ent = entOf(r, x.id), disp = ((r.inicial && r.inicial[x.id]) || 0) + ent, tiene = r.cerrado || (r.parcial && r.parcial[x.id] != null);
-    const v = vendido(r, x.id), lq = v * x.precio;
+    const pr = (r.precios && r.precios[x.id] != null) ? r.precios[x.id] : x.precio;
+    const v = vendido(r, x.id), lq = v * pr;
     tot += lq;
-    return `<tr><td>${esc(x.nombre)}</td><td>${pesos(x.precio)}</td><td>${disp}</td>
-      <td><input class="n" type="number" min="0" inputmode="numeric" data-ven="${esc(x.id)}" data-precio="${Number(x.precio)}" data-max="${disp}" value="${tiene ? v : ''}" ${dis}></td>
+    return `<tr><td>${esc(x.nombre)}</td><td>${pesos(pr)}</td><td>${disp}</td>
+      <td><input class="n" type="number" min="0" inputmode="numeric" data-ven="${esc(x.id)}" data-precio="${Number(pr)}" data-max="${disp}" value="${tiene ? v : ''}" ${dis}></td>
       <td data-lq="${esc(x.id)}">${pesos(lq)}</td></tr>`;
   }).join('');
   const aviso = r.cerrado ? '<p class="ok"><b>Día cerrado y enviado.</b></p>'
@@ -352,7 +352,7 @@ function recalcular() {
 const A = {
   entrar_admin() { location.href = 'admin.html'; },
   entrar_puesto() { pantallaLogin(null, 'puesto'); },
-  salir() { localStorage.removeItem(SES_KEY); S.ses = null; S.d = null; pantallaInicio(); },
+  salir() { localStorage.removeItem(SES_KEY); S.ses = null; S.d = null; pantallaLogin(null, 'puesto'); },
   tab(b) { S.tab = b.dataset.t; dibujar(); },
   entrega(b) { return accionEntrega(b.dataset.pid, 1); },
   restar(b) { return accionEntrega(b.dataset.pid, -1); },
@@ -417,7 +417,8 @@ const A = {
     const d = S.d, pa = leerVentas(), r = regOf(d, d.puesto, d.hoy);
     let t = 'Tinki Industry Jeans · ' + ((d.puestos[d.puesto] || {}).nombre || '') + ' · ' + d.hoy + '\n', tot = 0;
     d.catalogo.forEach(x => {
-      const v = pa[x.id] || 0, l = v * x.precio;
+      const pr = (r.precios && r.precios[x.id] != null) ? r.precios[x.id] : x.precio;
+      const v = pa[x.id] || 0, l = v * pr;
       tot += l;
       t += x.nombre + ': entregadas ' + entOf(r, x.id) + ', vendidas ' + v + ', por liquidar ' + pesos(l) + '\n';
     });
@@ -446,8 +447,8 @@ document.addEventListener('input', e => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) sincronizar(); });
 
 // ---------- ARRANQUE ----------
-pantallaInicio();         // primero se elige dónde entrar
-entrarGuardada();         // el ingreso automático corre en segundo plano
+pantallaLogin(null, 'puesto'); // el responsable entra directo con su usuario y clave
+entrarGuardada();              // si ya tiene sesión guardada, entra sin pedir clave
 setInterval(sincronizar, 10000);
 </script>
 </body>
