@@ -104,6 +104,15 @@ function iniciarSubs(){
 }
 
 
+function precHtml(pids){
+  if(!pids.length||!S.prods.length)return '<p class="mut">Crea puestos y productos para asignar precios.</p>';
+  if(!S.ppSel||!S.puestos[S.ppSel])S.ppSel=pids[0];
+  const pr=(S.puestos[S.ppSel].precios)||{};
+  return `<div class="row" style="margin-bottom:8px"><select id="ppsel">${pids.map(id=>`<option value="${id}" ${id===S.ppSel?'selected':''}>${esc(S.puestos[id].nombre)}</option>`).join('')}</select><span class="mut">Vacío = precio general</span></div>`+
+    S.prods.map(x=>`<div class="row" style="margin-bottom:6px"><span style="flex:1;min-width:140px">${esc(x.nombre)}</span><span class="mut">general ${x.precio}</span><input type="number" min="0" data-pp="${x.id}" value="${pr[x.id]!=null?pr[x.id]:''}" placeholder="${x.precio}" style="width:110px"></div>`).join('')+
+    `<div class="row"><button class="p" data-a="savePrecios">Guardar precios de este puesto</button></div>`;
+}
+function pprice(pid,x){const p=S.puestos[pid]&&S.puestos[pid].precios;return p&&p[x.id]!=null?p[x.id]:x.precio}
 function getRec(pid){const k=pid+'_'+S.fecha;if(S.regs[k])return JSON.parse(JSON.stringify(S.regs[k]));
   return{pid,fecha:S.fecha,inicial:Object.assign({},S.puestos[pid].stock||{}),entregas:[],final:{},cerrado:false,liquidado:false}}
 const saveRec=r=>{if((S.cierres||{})[r.fecha.slice(0,7)])throw new Error('El mes '+r.fecha.slice(0,7)+' est\u00e1 cerrado');return S.db.doc('registros/'+r.pid+'_'+r.fecha).set(r)};
@@ -350,14 +359,14 @@ function arqueoCard(pid,r){const ar=r.arqueo||{},v=arqVal(r);
   const rows=S.prods.map(x=>{const q=(r.final||{})[x.id]||0,c=ar[x.id];return`<tr><td>${esc(x.nombre)}</td><td>${q}</td><td><input type="number" min="0" inputmode="numeric" data-aq="${x.id}" value="${c!=null?c:''}" placeholder="0"></td><td>${c!=null?c-q:'–'}</td></tr>`}).join('');
   return`<div class="card"><b>Arqueo de inventario</b><p class="mut" style="margin:4px 0 8px">Cuenta las unidades físicas del puesto y compáralas con lo que debe haber. Un faltante se suma al saldo por cobrar y el inventario del puesto queda igual al conteo.</p><div class="sc"><table><thead><tr><th>Producto</th><th>Debe haber</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody>${rows}</tbody></table></div>${r.arqueo?`<p class="${v<0?'bad':'ok'}" style="margin:8px 0">${v<0?'Faltante: '+money(-v):v>0?'Sobrante: '+money(v):'Sin diferencias ✓'}</p>`:''}<button class="p" data-a="arqueo" data-pid="${pid}">Guardar arqueo</button></div>`}
 function resumenResp(pid){const r=getRec(pid),cl=r.cerrado;let u=0,v=0;
-  const li=S.prods.map(x=>{const n=cl?((r.final||{})[x.id]||0):(r.inicial[x.id]||0)+entOf(r,x.id);u+=n;v+=n*x.precio;return n?`${esc(x.nombre)}: <b>${n}</b>`:''}).filter(Boolean).join(' · ')||'<span class="mut">Sin inventario asignado todavía</span>';
+  const li=S.prods.map(x=>{const n=cl?((r.final||{})[x.id]||0):(r.inicial[x.id]||0)+entOf(r,x.id);u+=n;v+=n*pprice(pid,x);return n?`${esc(x.nombre)}: <b>${n}</b>`:''}).filter(Boolean).join(' · ')||'<span class="mut">Sin inventario asignado todavía</span>';
   const c=cuenta(pid,S.mine||[]);
   return`<div class="card"><div class="mut">${cl?'Te quedan (cierre de hoy)':'Inventario que tienes hoy'}</div><div class="big">${u} unidades</div><div>${li}</div><div class="mut" style="margin-top:6px">Valor al precio de liquidación: ${money(v)}</div>${c.deb>0?`<p class="wa" style="margin:10px 0 0">Saldo pendiente de días cerrados: <b>${money(c.deb)}</b></p>`:''}</div>`}
 function cuenta(pid,recs){const p=S.puestos[pid]||{},oe={};let venta=0,efe=0,arq=0;
   (recs||S.all||[]).filter(r=>r.pid===pid).forEach(r=>{
     if(r.cerrado){S.prods.forEach(x=>{const s=(r.inicial[x.id]||0)+entOf(r,x.id)-((r.final||{})[x.id]||0),pr=(r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:x.precio;venta+=s*pr});if(r.liquidado)efe+=r.efectivo||0;arq+=arqVal(r)}
     else S.prods.forEach(x=>{oe[x.id]=(oe[x.id]||0)+entOf(r,x.id)})});
-  let st=0,val=0;S.prods.forEach(x=>{const n=((p.stock||{})[x.id]||0)+(oe[x.id]||0);st+=n;val+=n*x.precio});
+  let st=0,val=0;S.prods.forEach(x=>{const n=((p.stock||{})[x.id]||0)+(oe[x.id]||0);st+=n;val+=n*pprice(pid,x)});
   return{st,val,venta,efe,arq,deb:venta-efe-arq}}
 function draw(){const keep={};document.querySelectorAll('[data-ven]').forEach(i=>{if(i.value!=='')keep[i.dataset.ven]=i.value});draw0();document.querySelectorAll('[data-ven]').forEach(i=>{if(keep[i.dataset.ven]!=null)i.value=keep[i.dataset.ven]});calc()}
 function calc(){let s=0;document.querySelectorAll('[data-ven]').forEach(i=>{const v=parseInt(i.value,10)||0,m=+i.dataset.max,id=i.dataset.ven,q=document.getElementById('q_'+id),w=document.getElementById('v_'+id);
@@ -407,6 +416,7 @@ function draw0(){
       ${S.prods.length?'':'<p style="margin-bottom:0"><a class="lk" data-a="ejemplo">Cargar catálogo Tinki (Drill Tinki, DKD, Gimaos, Crash, Clásico, Bermuda Jean)</a></p>'}</div>
       <h2>Puestos y responsables</h2><div class="card">${pids.map(id=>{const p=S.puestos[id];return`<div class="row" style="margin-bottom:6px"><span style="flex:1;min-width:140px"><b>${esc(p.nombre)}</b> · ${esc(p.resp||'')} <span class="mut">usuario: ${esc(p.usr||'(sin usuario, recréalo)')}</span></span><input id="nc_${id}" type="password" placeholder="Nueva clave" style="width:130px"><button data-a="clave" data-pid="${id}">Cambiar clave</button><button class="d" data-a="delpuesto" data-pid="${id}">Eliminar</button></div>`}).join('')||'<p class="mut" style="margin-top:0">Sin puestos.</p>'}
       <div class="row" style="margin-top:8px"><input id="qn" placeholder="Nombre del puesto" style="flex:1;min-width:130px"><input id="qr" placeholder="Responsable" style="flex:1;min-width:130px"><input id="qu" placeholder="Usuario" style="width:110px"><input id="qp" type="password" placeholder="Clave" style="width:110px"><button class="p" data-a="addpuesto">Crear</button></div></div>
+      <h2>Precios por puesto</h2><div class="card">${precHtml(pids)}</div>
       <h2>Mi acceso (administrador)</h2><div class="card"><div class="row"><span>Usuario: <b>${esc(S.ses.u)}</b></span><input id="ac" type="password" placeholder="Nueva clave" style="width:150px"><button data-a="cambiaradm">Cambiar clave</button></div><p class="mut" style="margin:12px 0 6px">Administradores</p>${[S.acc.u].concat((S.acc.otros||[]).map(a=>a.u)).map((x,i)=>`<div class="row" style="margin-bottom:6px"><span style="flex:1;min-width:110px"><b>${esc(x)}</b>${x===S.ses.u?' (tú)':''}</span><input id="nca_${i}" type="password" placeholder="Nueva clave" style="width:130px"><button data-a="claveadm" data-u="${esc(x)}" data-i="${i}">Cambiar clave</button>${i>0&&x!==S.ses.u?`<button class="d" data-a="deladm" data-u="${esc(x)}">Quitar</button>`:''}</div>`).join('')}<div class="row"><input id="nu" placeholder="Usuario del otro admin" style="flex:1;min-width:130px"><input id="np2" type="password" placeholder="Clave" style="width:120px"><button data-a="addadm">Agregar administrador</button></div></div>${MODO_PRUEBAS?'<h2>Pruebas</h2><div class="card"><p class="mut" style="margin-top:0">Borra los datos de prueba antes de empezar con datos reales.</p><button class="d" data-a="reset">Borrar datos de prueba</button></div>':''}`;
     A.className='adm';A.innerHTML=h;return}
   /* responsable */
@@ -433,7 +443,7 @@ async function exportar(){
   l.docs.map(d=>d.data()).sort((a,b)=>a.t-b.t).forEach(g=>o.push([new Date(g.t).toLocaleString('es-CO'),g.fecha,g.quien,g.acc].map(c).join(';')));
   await dl.save({filename:'respaldo-inventario-'+hoy()+'.csv',data:'\ufeff'+o.join('\n')});await S.db.doc('respaldo/ultimo').set({t:Date.now()});log('Descargó el respaldo');msg('Respaldo guardado. Envíalo a arroyavesantiago80@gmail.com');
 }
-document.addEventListener('change',e=>{const t=e.target;
+document.addEventListener('change',e=>{if(e.target.id==='ppsel'){S.ppSel=e.target.value;render(true);return}const t=e.target;
   if(t.id==='fecha'&&t.value){S.fecha=t.value;subRegs();render(true)}
   if(t.id==='selp'){S.sel=t.value;render(true)}
   if(t.id==='mes'&&t.value){S.mes=t.value;render(true)}
@@ -512,6 +522,7 @@ document.addEventListener('click',async e=>{
     const acc=JSON.parse(JSON.stringify(S.acc));acc.otros=(acc.otros||[]).concat([{u,h:await hash(u,c)}]);await S.db.doc('acceso/admin').set(acc);log('Agregó al administrador '+u);msg('Administrador agregado')}
   else if(a==='cambiaradm'){const c=$('#ac').value;if(c.length<4)return msg('La clave debe tener mínimo 4 caracteres');
     const u=S.ses.u,h=await hash(u,c),acc=JSON.parse(JSON.stringify(S.acc));if(acc.u===u)acc.h=h;else(acc.otros||[]).forEach(x=>{if(x.u===u)x.h=h});await S.db.doc('acceso/admin').set(acc);S.ses={u,h};try{localStorage.setItem('inv_ses',JSON.stringify(S.ses))}catch(x){}msg('Clave actualizada')}
+  else if(a==='savePrecios'){const pr={};document.querySelectorAll('[data-pp]').forEach(i=>{if(i.value!=='')pr[i.dataset.pp]=+i.value});await S.db.doc('puestos/'+S.ppSel).update({precios:pr});log('Precios del puesto '+S.puestos[S.ppSel].nombre);msg('Precios guardados')}
   else if(a==='clave'){const c=$('#nc_'+pid).value,p=S.puestos[pid];if(c.length<4||!p.usr)return msg('Clave de mínimo 4 caracteres (y el puesto debe tener usuario)');
     await S.db.doc('puestos/'+pid).update({h:await hash(p.usr,c)});log('Cambió la clave de '+p.nombre);msg('Clave actualizada')}
   else if(a==='addprod'){const n=$('#pn').value.trim(),pr=+$('#pp').value;if(!n||!(pr>=0))return msg('Escribe nombre y precio');
@@ -548,7 +559,7 @@ document.addEventListener('click',async e=>{
       const v=parseInt(i.value,10)||0;if(v>+i.dataset.max||v<0)bad='Las vendidas no pueden ser más que las disponibles.';fin[i.dataset.ven]=+i.dataset.max-v});
     if(bad)return msg(bad);
     if(!(await yes('¿Cerrar el día con estos inventarios finales?')))return;
-    r.final=fin;r.cerrado=true;r.precios={};S.prods.forEach(x=>r.precios[x.id]=x.precio);
+    r.final=fin;r.cerrado=true;r.precios={};S.prods.forEach(x=>r.precios[x.id]=pprice(pid,x));
     await saveRec(r);await S.db.doc('puestos/'+pid).update({stock:fin});log('Cerró el día de '+S.puestos[pid].nombre);msg('Día cerrado')}
   else if(a==='avance'){const r=getRec(pid),pa={};let bad='';document.querySelectorAll('[data-ven]').forEach(i=>{const v=parseInt(i.value,10)||0;if(v>+i.dataset.max)bad='Las vendidas no pueden ser más que las disponibles.';pa[i.dataset.ven]=v});
     if(bad)return msg(bad);r.parcial=pa;await saveRec(r);log('Guardó avance de '+S.puestos[pid].nombre);msg('Avance guardado')}
