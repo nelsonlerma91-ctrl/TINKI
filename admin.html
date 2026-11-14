@@ -167,7 +167,7 @@ const CACHE={doc:{},col:{}};
 let _hoy=null;
 function notifyAll(){SUBS.slice().forEach(x=>x.run())}
 async function srv(body){
-  let url=API_URL_FIJA;try{url=localStorage.getItem('tinki_url')||API_URL_FIJA}catch(e){}
+  let url=API_URL_FIJA;
   const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),25000);
   let j;
   try{
