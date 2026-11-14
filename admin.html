@@ -86,6 +86,7 @@ function aplicarSrv(d){
   if(d.rol!=='admin')throw new Error('Esta entrada es solo para el administrador. Use la entrada de responsables.');
   S.admin=true;S.isAdm=true;S.acc={u:USUARIO_ADMIN,otros:[]};
   cacheFill(d);
+  S.enPoder=d.enPoder||{};
   S.fecha=d.hoy;
   iniciarSubs();
 }
@@ -126,6 +127,15 @@ function pagosHtml(pids){
   return `<h2 style="margin-top:14px">Estado de cuenta y pagos</h2>${resumen}<div class="card"><div class="row" style="margin-bottom:8px"><select id="pgsel">${pids.map(id=>`<option value="${id}" ${id===sel?'selected':''}>${esc(S.puestos[id].nombre)}</option>`).join('')}</select></div>
     <div class="row"><input type="date" id="pgf" value="${hoy()}"><input type="number" id="pgm" min="0" placeholder="Monto recibido" style="width:150px"><input id="pgn" placeholder="Nota (opcional)" style="flex:1;min-width:140px"><button class="p" data-a="regPago">Registrar pago</button></div>
     <div style="margin-top:10px">${lista.length?lista.map(x=>`<div class="row" style="border-bottom:1px solid var(--bd);padding:6px 0"><span style="min-width:100px">${esc(x.fecha)}</span><b style="min-width:120px">${money(x.monto)}</b><span class="mut" style="flex:1">${esc(x.nota||'')}</span><button class="d" data-a="delPago" data-id="${x.id}">Quitar</button></div>`).join(''):'<p class="mut" style="margin:0">Sin pagos registrados para este puesto.</p>'}</div></div>`;
+}
+function corteHtml(pids){
+  if(!pids.length||!S.prods.length)return '';
+  const sel=(S.pagoSel&&S.puestos[S.pagoSel])?S.pagoSel:pids[0];
+  const c=(S.puestos[sel].corte)||null;
+  return `<h2 style="margin-top:14px">Empezar de cero</h2><div class="card"><p class="mut" style="margin:0 0 8px">Registre cuántas unidades tiene hoy el puesto. A partir de esa fecha solo cuentan las entregas, ventas y pagos nuevos. Lo anterior se conserva en el historial pero no afecta los saldos.${c?` <b>Inicio actual: ${esc(c.fecha)}</b>`:''}</p>
+    <div class="row" style="margin-bottom:8px"><span>Fecha de inicio:</span><input type="date" id="cfe" value="${c?c.fecha:hoy()}"></div>
+    ${S.prods.map(x=>`<div class="row" style="margin-bottom:6px"><span style="flex:1;min-width:140px">${esc(x.nombre)}</span><input type="number" min="0" data-cor="${x.id}" value="${c&&c.inicial&&c.inicial[x.id]!=null?c.inicial[x.id]:''}" placeholder="0" style="width:110px"></div>`).join('')}
+    <div class="row" style="margin-top:8px"><button class="p" data-a="iniciarCero" data-pid="${sel}">Empezar de cero con este inventario</button></div></div>`;
 }
 function pprice(pid,x){const p=S.puestos[pid]&&S.puestos[pid].precios;return p&&p[x.id]!=null?p[x.id]:x.precio}
 function getRec(pid){const k=pid+'_'+S.fecha;if(S.regs[k])return JSON.parse(JSON.stringify(S.regs[k]));
@@ -201,7 +211,7 @@ const BLOQ_EN_LINEA=['setup','resetadm','reset','ejemplo','creardatos','addadm',
 const snapD=(p,d)=>({id:p.split('/').pop(),exists:d!=null,data:()=>d==null?undefined:JSON.parse(JSON.stringify(d))});
 // Paquete del servidor: llena la memoria de la página (una llamada para todo)
 function cacheFill(b){
-  _hoy=b.hoy;
+  _hoy=b.hoy;S.enPoder=b.enPoder||{};
   CACHE.doc={'config/main':b.config,'costos/main':b.costos,'respaldo/ultimo':b.respaldo||null};
   CACHE.col={
     puestos:Object.keys(b.puestos||{}).map(id=>({id,data:b.puestos[id]})),
@@ -378,12 +388,13 @@ function resumenResp(pid){const r=getRec(pid),cl=r.cerrado;let u=0,v=0;
   const li=S.prods.map(x=>{const n=cl?((r.final||{})[x.id]||0):(r.inicial[x.id]||0)+entOf(r,x.id);u+=n;v+=n*pprice(pid,x);return n?`${esc(x.nombre)}: <b>${n}</b>`:''}).filter(Boolean).join(' · ')||'<span class="mut">Sin inventario asignado todavía</span>';
   const c=cuenta(pid,S.mine||[]);
   return`<div class="card"><div class="mut">${cl?'Te quedan (cierre de hoy)':'Inventario que tienes hoy'}</div><div class="big">${u} unidades</div><div>${li}</div><div class="mut" style="margin-top:6px">Valor al precio de liquidación: ${money(v)}</div>${c.deb>0?`<p class="wa" style="margin:10px 0 0">Saldo pendiente de días cerrados: <b>${money(c.deb)}</b></p>`:''}</div>`}
-function cuenta(pid,recs){const p=S.puestos[pid]||{},oe={};let venta=0,efe=0,arq=0;
-  (recs||S.all||[]).filter(r=>r.pid===pid).forEach(r=>{
+function cuenta(pid,recs){const p=S.puestos[pid]||{},oe={},cf=(p.corte&&p.corte.fecha)||'';let venta=0,efe=0,arq=0;
+  (recs||S.all||[]).filter(r=>r.pid===pid&&r.fecha>=cf).forEach(r=>{
     if(r.cerrado){S.prods.forEach(x=>{const s=(r.inicial[x.id]||0)+entOf(r,x.id)-((r.final||{})[x.id]||0),pr=(r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:x.precio;venta+=s*pr});arq+=arqVal(r)}
     else S.prods.forEach(x=>{oe[x.id]=(oe[x.id]||0)+entOf(r,x.id)})});
-  (S.pagos||[]).forEach(x=>{if(x.pid===pid)efe+=+x.monto||0});
-  let st=0,val=0;S.prods.forEach(x=>{const n=((p.stock||{})[x.id]||0)+(oe[x.id]||0);st+=n;val+=n*pprice(pid,x)});
+  (S.pagos||[]).forEach(x=>{if(x.pid===pid&&(x.fecha||'')>=cf)efe+=+x.monto||0});
+  let st=0,val=0;const ep=(S.enPoder||{})[pid];
+  S.prods.forEach(x=>{const n=ep?(ep[x.id]||0):((p.stock||{})[x.id]||0)+(oe[x.id]||0);st+=n;val+=n*pprice(pid,x)});
   return{st,val,venta,efe,arq,deb:venta-efe-arq}}
 function draw(){const keep={};document.querySelectorAll('[data-ven]').forEach(i=>{if(i.value!=='')keep[i.dataset.ven]=i.value});draw0();document.querySelectorAll('[data-ven]').forEach(i=>{if(keep[i.dataset.ven]!=null)i.value=keep[i.dataset.ven]});calc()}
 function calc(){let s=0;document.querySelectorAll('[data-ven]').forEach(i=>{const v=parseInt(i.value,10)||0,m=+i.dataset.max,id=i.dataset.ven,q=document.getElementById('q_'+id),w=document.getElementById('v_'+id);
@@ -414,7 +425,7 @@ function draw0(){
     if(S.tab==='memoria')h+=memHtml();
     if(S.tab==='bitacora'){const f=(S.bf||'').toLowerCase(),fl=(S.bit||[]).filter(r=>!f||r.join(' ').toLowerCase().includes(f));
       h+=`<div class="row" style="margin-bottom:10px"><input id="bf" placeholder="Filtrar (usuario, acción, día)" value="${esc(S.bf||'')}" style="flex:1;min-width:160px"><button data-a="bitact">Actualizar</button></div><div class="card"><b>Bitácora</b> <span class="mut">(últimos 300 movimientos, el más reciente arriba)</span><div class="sc"><table><thead><tr><th>Fecha y hora</th><th>Día</th><th>Quién</th><th>Acción</th></tr></thead><tbody>${fl.map(r=>`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td style="text-align:left;white-space:normal">${esc(r[3])}</td></tr>`).join('')||'<tr><td colspan="4" class="mut">Sin movimientos.</td></tr>'}</tbody></table></div></div>`}
-    if(S.tab==='cuentas')h+=pagosHtml(pids);
+    if(S.tab==='cuentas')h+=pagosHtml(pids)+corteHtml(pids);
     if(S.tab==='resultados'){const mes=S.mes||S.fecha.slice(0,7),X=resultados(mes),pc=(v,t)=>t?Math.round(v/t*100)+'%':'0%',
       row=(n,v,t,b)=>`<tr${b?' style="font-weight:700"':''}><td>${esc(n)}</td><td>${money(v)}</td><td>${pc(v,t)}</td></tr>`;
       const ing=S.prods.filter(x=>X.R[x.id]).map(x=>row(x.nombre,X.R[x.id],X.vt)).join(''),cos=S.prods.filter(x=>X.C[x.id]).map(x=>row('Costo '+x.nombre,X.C[x.id],X.vt)).join(''),gas=Object.keys(X.G).map(k=>row(k,X.G[k],X.vt)).join('');
@@ -544,6 +555,7 @@ document.addEventListener('click',async e=>{
   else if(a==='regPago'){const pid=S.pagoSel,m=parseFloat($('#pgm').value),f=$('#pgf').value||hoy(),n=($('#pgn').value||'').trim();if(!(m>0))return msg('Escribe el monto recibido');await S.db.collection('pagos').add({pid,fecha:f,monto:m,nota:n});log('Registró pago de '+money(m)+' de '+S.puestos[pid].nombre);msg('Pago registrado')}
   else if(a==='delPago'){if(!(await yes('¿Quitar este pago?')))return;await S.db.collection('pagos').doc(b.dataset.id).delete();log('Quitó un pago');msg('Pago quitado')}
   else if(a==='pagoTotal'){const pid=S.pagoSel,c=cuenta(pid);if(!(c.deb>0))return msg('No hay saldo pendiente');if(!(await yes('¿Registrar pago de '+money(c.deb)+' como saldo completo?')))return;await S.db.collection('pagos').add({pid,fecha:hoy(),monto:Math.round(c.deb),nota:'Saldo completo'});log('Registró pago de saldo completo de '+money(c.deb)+' de '+S.puestos[pid].nombre);msg('Saldo marcado como pagado')}
+  else if(a==='iniciarCero'){const f=$('#cfe').value||hoy(),ini={};document.querySelectorAll('[data-cor]').forEach(i=>{const v=parseInt(i.value,10);if(v>0)ini[i.dataset.cor]=v});if(!(await yes('¿Empezar de cero con '+f+' para '+S.puestos[pid].nombre+'? Lo anterior deja de afectar los saldos.')))return;await S.db.doc('puestos/'+pid).update({corte:{fecha:f,inicial:ini},stock:ini});log('Empezó de cero '+S.puestos[pid].nombre+' desde '+f);msg('Inicio de operación guardado')}
   else if(a==='savePrecios'){const pr={};document.querySelectorAll('[data-pp]').forEach(i=>{if(i.value!=='')pr[i.dataset.pp]=+i.value});await S.db.doc('puestos/'+S.ppSel).update({precios:pr});log('Precios del puesto '+S.puestos[S.ppSel].nombre);msg('Precios guardados')}
   else if(a==='clave'){const c=$('#nc_'+pid).value,p=S.puestos[pid];if(c.length<4||!p.usr)return msg('Clave de mínimo 4 caracteres (y el puesto debe tener usuario)');
     await S.db.doc('puestos/'+pid).update({h:await hash(p.usr,c)});log('Cambió la clave de '+p.nombre);msg('Clave actualizada')}
