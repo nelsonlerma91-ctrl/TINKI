@@ -176,24 +176,91 @@ function bodegaHtml(pids){
   <div class="card"><b>Últimos movimientos</b>${movs.map(x=>`<div class="row" style="border-bottom:1px solid var(--bd);padding:6px 0"><span style="min-width:95px">${esc(x.fecha)}</span><span style="min-width:90px">${x.tipo==='salida'?'Salida':'Entrada'}</span><span style="flex:1">${esc(x.producto_nombre||'')} × ${x.cantidad}${x.puesto_nombre?' → '+esc(x.puesto_nombre):''}</span><span class="mut">${esc(x.nota||'')}</span></div>`).join('')||'<p class="mut" style="margin:6px 0 0">Sin movimientos.</p>'}</div>`;
 }
 function informeHtml(){
-  const f=S.fecha,filas=[];let T={vend:0,liq:0,disp:0,quedan:0,efe:0};
-  Object.keys(S.puestos).forEach(pid=>{
-    const r=S.regs[pid+'_'+f]||{entregas:[],parcial:{},inicial:{}},pu=S.puestos[pid];
-    const lineas=[];let P={vend:0,liq:0,disp:0,quedan:0};
-    S.prods.forEach(x=>{
-      const pr=pprice(pid,x),dp=((r.inicial&&r.inicial[x.id])||0)+entOf(r,x.id),v=(r.parcial&&r.parcial[x.id])||0;
-      if(!dp&&!v)return;
-      P.vend+=v;P.liq+=v*pr;P.disp+=dp;P.quedan+=dp-v;
-      lineas.push(`<tr><td>${esc(x.nombre)}</td><td>${dp}</td><td>${v}</td><td>${dp-v}</td><td>${money(v*pr)}</td></tr>`);
-    });
-    T.vend+=P.vend;T.liq+=P.liq;T.disp+=P.disp;T.quedan+=P.quedan;
-    filas.push(`<h3>${esc(pu.nombre)} <span style="color:#666;font-weight:normal">· ${esc(pu.resp||'')}</span> · ${r.cerrado?'Día cerrado':'Día abierto'}</h3>`+
-      (lineas.length?`<table><tr><th>Producto</th><th>Disponible</th><th>Vendidas</th><th>Le quedan</th><th>Por liquidar</th></tr>${lineas.join('')}<tr class="t"><td>Total</td><td>${P.disp}</td><td>${P.vend}</td><td>${P.quedan}</td><td>${money(P.liq)}</td></tr></table>`:'<p>Sin movimiento.</p>'));
+  const f=S.fecha, gen=new Date().toLocaleString('es-CO');
+  const costo=x=>+((S.costos||{})[x.id])||0;
+  const pu=Object.keys(S.puestos);
+  const porPuesto=[], porProd={}, clientesPend=[];
+  let V=0,C=0,U=0,UN=0,calleU=0,calleV=0,calleC=0,cobrarPuestos=0,efectivo=0,abiertos=0;
+  pu.forEach(pid=>{
+    const p=S.puestos[pid], cf=(p.corte&&p.corte.fecha)||'';
+    const recs=(S.all||[]).filter(r=>r.pid===pid&&r.cerrado&&r.fecha>=cf);
+    let pv=0,pc=0,pu_=0;
+    recs.forEach(r=>{S.prods.forEach(x=>{
+      const i=(r.inicial&&r.inicial[x.id])||0,e=entOf(r,x.id),fin=(r.final||{})[x.id];
+      const sold=fin!=null?i+e-fin:((r.parcial&&r.parcial[x.id])||0);
+      if(!sold)return;
+      const pr=(r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:pprice(pid,x);
+      pv+=sold*pr;pc+=sold*costo(x);pu_+=sold;
+      const k=x.id;porProd[k]=porProd[k]||{nombre:x.nombre,u:0,v:0,c:0};
+      porProd[k].u+=sold;porProd[k].v+=sold*pr;porProd[k].c+=sold*costo(x);
+    });});
+    const cu=cuenta(pid);
+    const ep=(S.enPoder||{})[pid]||{};
+    let eu=0,ev=0,ec=0;
+    S.prods.forEach(x=>{const n=ep[x.id]||0;eu+=n;ev+=n*pprice(pid,x);ec+=n*costo(x)});
+    abiertos+=(S.all||[]).filter(r=>r.pid===pid&&!r.cerrado&&r.fecha<f&&r.fecha>=cf&&Object.values(r.parcial||{}).some(v=>v>0)).length;
+    V+=pv;C+=pc;U+=pv-pc;UN+=pu_;calleU+=eu;calleV+=ev;calleC+=ec;
+    cobrarPuestos+=Math.max(0,cu.deb);efectivo+=cu.efe;
+    porPuesto.push({nombre:p.nombre,resp:p.resp||'',vendidas:pu_,venta:pv,costo:pc,util:pv-pc,margen:pv?(pv-pc)/pv*100:0,enCalleU:eu,enCalleV:ev,saldo:cu.deb,pagado:cu.efe});
   });
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Informe ${esc(f)}</title><style>body{font-family:Arial,sans-serif;color:#111;margin:24px}h1{font-size:20px;margin:0}h3{margin:18px 0 6px;font-size:15px}table{border-collapse:collapse;width:100%}th,td{border-bottom:1px solid #ccc;padding:6px;text-align:right;font-size:13px}th:first-child,td:first-child{text-align:left}tr.t td{font-weight:bold;border-top:2px solid #111}.sum{margin-top:18px;font-size:14px}</style></head><body>
-    <h1>Tinki Industry Jeans · Informe del día</h1><p>Fecha: <b>${esc(f)}</b></p>${filas.join('')}
-    <div class="sum"><b>Total del día:</b> Vendidas ${T.vend} · Por liquidar ${money(T.liq)} · Disponible ${T.disp} · Quedan ${T.quedan}</div>
-    <script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script></body></html>`;
+  const gastos=(S.gas||[]).reduce((t,g)=>t+(+g.monto||0),0);
+  const neta=U-gastos;
+  const margenGral=V?U/V*100:0;
+  (S.facturas||[]).forEach(fa=>{
+    const pag=(S.cobros||[]).filter(c=>c.data.factura===fa.id).reduce((t,c)=>t+(+c.data.monto||0),0);
+    const sal=(+fa.data.total||0)-pag;
+    if(sal>0)clientesPend.push({cliente:fa.data.cliente,fecha:fa.data.fecha,total:+fa.data.total||0,saldo:sal});
+  });
+  const porCobrarCli=clientesPend.reduce((t,x)=>t+x.saldo,0);
+  const bodegaU=Object.values(stockBodega()).reduce((t,n)=>t+n,0);
+  const prodRows=Object.values(porProd).sort((a,b)=>b.v-a.v).map(x=>`<tr><td>${esc(x.nombre)}</td><td class="n">${x.u}</td><td class="n">${money(x.v)}</td><td class="n">${money(x.c)}</td><td class="n">${money(x.v-x.c)}</td><td class="n">${x.v?((x.v-x.c)/x.v*100).toFixed(1):'0.0'}%</td></tr>`).join('')||'<tr><td colspan="6">Sin ventas cerradas todavía.</td></tr>';
+  const puRows=porPuesto.map(x=>`<tr><td><b>${esc(x.nombre)}</b><div class="m">${esc(x.resp)}</div></td><td class="n">${x.vendidas}</td><td class="n">${money(x.venta)}</td><td class="n">${money(x.costo)}</td><td class="n">${money(x.util)}</td><td class="n">${x.margen.toFixed(1)}%</td><td class="n">${x.enCalleU} u · ${money(x.enCalleV)}</td><td class="n">${money(x.pagado)}</td><td class="n ${x.saldo>0?'neg':''}">${money(x.saldo)}</td></tr>`).join('');
+  const cliRows=clientesPend.map(x=>`<tr><td>${esc(x.cliente)}</td><td>${esc(x.fecha)}</td><td class="n">${money(x.total)}</td><td class="n neg">${money(x.saldo)}</td></tr>`).join('')||'<tr><td colspan="4">Sin saldos pendientes.</td></tr>';
+  const alertas=[];
+  if(cobrarPuestos>0)alertas.push(`Los puestos deben ${money(cobrarPuestos)} en total.`);
+  if(porCobrarCli>0)alertas.push(`Los clientes deben ${money(porCobrarCli)} en ${clientesPend.length} factura(s).`);
+  if(abiertos>0)alertas.push(`Hay ${abiertos} día(s) con ventas sin cerrar.`);
+  if(gastos>U)alertas.push('Los gastos superan la utilidad bruta: el negocio no cubre sus gastos en este período.');
+  const resumen=`En el período, el negocio vendió ${UN} unidades por ${money(V)}, con un costo de ${money(C)}. La utilidad bruta es de ${money(U)} (margen ${margenGral.toFixed(1)}%). Tras ${money(gastos)} de gastos, la utilidad neta es de ${money(neta)}. Hay ${calleU} unidades en la calle, valoradas en ${money(calleV)} a precio de distribución.`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Resumen gerencial ${esc(f)}</title><style>
+  *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#1d1d1f;margin:0;padding:28px;background:#fff}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #b8860b;padding-bottom:10px}
+  .head h1{margin:0;font-size:22px}.head .s{color:#666;font-size:12px}
+  h2{font-size:15px;margin:22px 0 8px;color:#b8860b;text-transform:uppercase;letter-spacing:.5px}
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .k{border:1px solid #e3e3e3;border-radius:8px;padding:10px 12px;background:#fafafa}
+  .k .l{font-size:11px;color:#666;text-transform:uppercase}.k .v{font-size:18px;font-weight:bold;margin-top:4px}.k .p{font-size:11px;color:#666;margin-top:2px}
+  .res{background:#f6f1e3;border-left:4px solid #b8860b;padding:12px 14px;border-radius:6px;font-size:13px;line-height:1.5}
+  table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px solid #e5e5e5;padding:6px 6px;text-align:left;vertical-align:top}
+  th{background:#f2f2f2;font-size:11px;text-transform:uppercase;color:#444}td.n,th.n{text-align:right;white-space:nowrap}
+  .neg{color:#b00020;font-weight:bold}.m{color:#777;font-size:11px}
+  .alert{font-size:13px;margin:4px 0}.alert:before{content:'• '}
+  .foot{margin-top:24px;font-size:10px;color:#888;border-top:1px solid #ddd;padding-top:6px}
+  @media print{body{padding:14px}h2{break-after:avoid}table,.kpi{break-inside:avoid}}
+  </style></head><body>
+  <div class="head"><div><h1>Tinki Industry Jeans</h1><div class="s">Resumen gerencial · corte al ${esc(f)}</div></div><div class="s">Generado: ${esc(gen)}</div></div>
+  <h2>Indicadores del período</h2>
+  <div class="kpi">
+    <div class="k"><div class="l">Ventas (valor)</div><div class="v">${money(V)}</div><div class="p">${UN} unidades vendidas</div></div>
+    <div class="k"><div class="l">Costo de lo vendido</div><div class="v">${money(C)}</div><div class="p">${V?(C/V*100).toFixed(1):'0.0'}% de las ventas</div></div>
+    <div class="k"><div class="l">Utilidad bruta</div><div class="v">${money(U)}</div><div class="p">Margen ${margenGral.toFixed(1)}%</div></div>
+    <div class="k"><div class="l">Gastos</div><div class="v">${money(gastos)}</div><div class="p">${(S.gas||[]).length} registro(s)</div></div>
+    <div class="k"><div class="l">Utilidad neta</div><div class="v ${neta<0?'neg':''}">${money(neta)}</div><div class="p">${V?(neta/V*100).toFixed(1):'0.0'}% de las ventas</div></div>
+    <div class="k"><div class="l">Inventario en la calle</div><div class="v">${calleU} u</div><div class="p">${money(calleV)} a precio distribución · costo ${money(calleC)}</div></div>
+    <div class="k"><div class="l">Por cobrar a puestos</div><div class="v ${cobrarPuestos>0?'neg':''}">${money(cobrarPuestos)}</div><div class="p">Efectivo recibido: ${money(efectivo)}</div></div>
+    <div class="k"><div class="l">Por cobrar a clientes</div><div class="v ${porCobrarCli>0?'neg':''}">${money(porCobrarCli)}</div><div class="p">${clientesPend.length} factura(s) con saldo</div></div>
+  </div>
+  <h2>Lectura del negocio</h2><div class="res">${resumen}</div>
+  ${alertas.length?`<h2>Atención</h2>${alertas.map(a=>`<div class="alert">${esc(a)}</div>`).join('')}`:''}
+  <h2>Por puesto</h2>
+  <table><tr><th>Puesto</th><th class="n">Unid.</th><th class="n">Venta</th><th class="n">Costo</th><th class="n">Utilidad</th><th class="n">Margen</th><th class="n">En la calle</th><th class="n">Pagado</th><th class="n">Saldo</th></tr>${puRows}</table>
+  <h2>Por producto</h2>
+  <table><tr><th>Producto</th><th class="n">Unid.</th><th class="n">Venta</th><th class="n">Costo</th><th class="n">Utilidad</th><th class="n">Margen</th></tr>${prodRows}</table>
+  <h2>Clientes con saldo</h2>
+  <table><tr><th>Cliente</th><th>Fecha</th><th class="n">Total factura</th><th class="n">Saldo</th></tr>${cliRows}</table>
+  <p class="m" style="margin-top:8px">En bodega: ${bodegaU} unidades (registro aparte).</p>
+  <div class="foot">Ventas y costos son de días cerrados desde el inicio de operación de cada puesto. El costo usa el costo registrado por producto. Las cifras de la calle son el inventario que hoy tienen los puestos.</div>
+  <script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script></body></html>`;
 }
 function informePdf(){
   const w=window.open('','_blank');
@@ -206,14 +273,19 @@ function invHtml(){
   const filas=S.prods.map(x=>{let d=0,s=0;lista.forEach(pid=>{const r=S.regs[pid+'_'+S.fecha]||{};d+=((r.inicial&&r.inicial[x.id])||0)+entOf(r,x.id);s+=(r.parcial&&r.parcial[x.id])||0});return `<tr><td>${esc(x.nombre)}</td><td>${d}</td><td>${s}</td><td>${d-s}</td></tr>`}).join('');
   return `<div class="card"><div class="row" style="justify-content:space-between"><b>Inventario por producto</b><select id="invsel">${opts}</select></div><div class="sc"><table><thead><tr><th>Producto</th><th>Disponible</th><th>Vendidas</th><th>Quedan</th></tr></thead><tbody>${filas}</tbody></table></div></div>`;
 }
+function filasFactHtml(){
+  if(!S.factLines||!S.factLines.length)S.factLines=[{p:'',c:1,pr:''}];
+  const tot=S.factLines.reduce((t,l)=>t+((+l.c||0)*(+l.pr||0)),0);
+  return S.factLines.map((l,i)=>`<div class="row" style="margin-bottom:6px"><select data-fl="p" data-i="${i}" style="flex:1;min-width:170px"><option value="">— producto —</option>${S.prods.map(x=>`<option value="${x.id}" ${l.p===x.id?'selected':''}>${esc(x.nombre)} (general ${x.precio})</option>`).join('')}</select><input type="number" min="1" data-fl="c" data-i="${i}" value="${l.c}" placeholder="Cantidad" style="width:100px"><input type="number" min="0" data-fl="pr" data-i="${i}" value="${l.pr}" placeholder="Precio" style="width:120px"><span style="min-width:110px;text-align:right">${money((+l.c||0)*(+l.pr||0))}</span><button class="d" data-a="delFactRow" data-i="${i}">Quitar</button></div>`).join('')+`<div class="row" style="margin-top:8px"><button data-a="addFactRow">+ Agregar producto</button><span class="mut" style="margin-left:auto">Total factura: <b>${money(tot)}</b></span></div>`;
+}
 function clientesHtml(){
   const facs=(S.facturas||[]).slice().sort((a,b)=>(a.data.fecha||'')<(b.data.fecha||'')?1:-1);
   const cobrado=id=>(S.cobros||[]).filter(c=>c.data.factura===id).reduce((t,c)=>t+(+c.data.monto||0),0);
   let deuda=0;
   const filas=facs.map(f=>{const pag=cobrado(f.id),sal=(+f.data.total||0)-pag;deuda+=Math.max(0,sal);return `<tr><td>${esc(f.data.fecha)}</td><td>${esc(f.data.cliente)}</td><td>${money(f.data.total)}</td><td>${money(pag)}</td><td><b>${money(sal)}</b></td><td>${sal>0?`<input id="cob_${f.id}" type="number" min="1" placeholder="Monto" style="width:110px"> <button class="p" data-a="cobrar" data-id="${f.id}">Cobrar</button>`:'<span class="ok">Pagada</span>'}</td></tr>`}).join('');
-  return `<h2 style="margin-top:14px">Nueva factura a cliente</h2><div class="card"><p class="mut" style="margin:0 0 8px">Una línea por producto: <b>NOMBRE CANTIDAD PRECIO</b>. Ejemplo: GIMAOS 100 55000. La mercancía sale de bodega y el cliente queda debiendo el total. No afecta el inventario de los puestos.</p>
-  <div class="row" style="margin-bottom:8px"><input id="fcli" placeholder="Nombre del cliente" style="flex:1;min-width:160px"><input type="date" id="ffec" value="${hoy()}"></div>
-  <textarea id="flin" rows="5" style="width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px"></textarea>
+  return `<h2 style="margin-top:14px">Nueva factura a cliente</h2><div class="card"><p class="mut" style="margin:0 0 8px">Elija el producto, la cantidad y el precio (por defecto el precio general, que puede cambiar). La mercancía sale de bodega y el cliente queda debiendo el total. No afecta el inventario de los puestos.</p>
+  <div class="row" style="margin-bottom:8px"><input id="fcli" placeholder="Nombre del cliente" value="${esc(S.factCli||'')}" style="flex:1;min-width:160px"><input type="date" id="ffec" value="${hoy()}"></div>
+  ${filasFactHtml()}
   <div class="row" style="margin-top:8px"><button class="p" data-a="crearFactura">Crear factura</button></div></div>
   <h2>Cuentas por cobrar a clientes</h2><div class="card"><p class="mut" style="margin:0 0 8px">Total por cobrar a clientes: <b>${money(deuda)}</b></p><div class="sc"><table><tr><th>Fecha</th><th>Cliente</th><th>Total</th><th>Pagado</th><th>Saldo</th><th></th></tr>${filas||'<tr><td colspan="6" class="mut">Sin facturas.</td></tr>'}</table></div></div>`;
 }
@@ -558,7 +630,7 @@ async function exportar(){
   l.docs.map(d=>d.data()).sort((a,b)=>a.t-b.t).forEach(g=>o.push([new Date(g.t).toLocaleString('es-CO'),g.fecha,g.quien,g.acc].map(c).join(';')));
   await dl.save({filename:'respaldo-inventario-'+hoy()+'.csv',data:'\ufeff'+o.join('\n')});await S.db.doc('respaldo/ultimo').set({t:Date.now()});log('Descargó el respaldo');msg('Respaldo guardado. Envíalo a arroyavesantiago80@gmail.com');
 }
-document.addEventListener('change',e=>{if(e.target.id==='invsel'){S.invPuesto=e.target.value;render(true);return}if(e.target.id==='pgsel'){S.pagoSel=e.target.value;render(true);return}if(e.target.id==='ppsel'){S.ppSel=e.target.value;render(true);return}const t=e.target;
+document.addEventListener('change',e=>{if(e.target.id==='fcli'){S.factCli=e.target.value;return}if(e.target.dataset&&e.target.dataset.fl){const i=+e.target.dataset.i,f=e.target.dataset.fl;S.factLines=S.factLines||[];const l=S.factLines[i];if(!l)return;if(f==='p'){l.p=e.target.value;const x=S.prods.find(z=>z.id===l.p);if(x&&(l.pr===''||l.pr==null))l.pr=x.precio}else l[f]=e.target.value;render(true);return}if(e.target.id==='invsel'){S.invPuesto=e.target.value;render(true);return}if(e.target.id==='pgsel'){S.pagoSel=e.target.value;render(true);return}if(e.target.id==='ppsel'){S.ppSel=e.target.value;render(true);return}const t=e.target;
   if(t.id==='fecha'&&t.value){S.fecha=t.value;subRegs();render(true)}
   if(t.id==='selp'){S.sel=t.value;render(true)}
   if(t.id==='mes'&&t.value){S.mes=t.value;render(true)}
@@ -645,7 +717,9 @@ document.addEventListener('click',async e=>{
   else if(a==='saveAlertas'){const s=parseFloat($('#alS').value),d=parseInt($('#alD').value,10);if(!(s>=0)||!(d>=0))return msg('Escribe valores válidos');await S.db.doc('config/main').update({alertas:{saldo:s,dias:d}});log('Cambió los límites de alertas');msg('Alertas guardadas')}
   else if(a==='regBodega'){const tipo=$('#bt').value,pr=$('#bp').value,c=parseInt($('#bc').value,10),f=$('#bf').value||hoy(),pu=$('#bpu').value,n=($('#bn').value||'').trim();if(!(c>0))return msg('Escribe la cantidad');const prod=S.prods.find(x=>x.id===pr)||{};await S.db.collection('bodega').add({tipo,fecha:f,producto:pr,producto_nombre:prod.nombre||'',cantidad:c,pid:pu,puesto_nombre:pu&&S.puestos[pu]?S.puestos[pu].nombre:'',nota:n});msg(tipo==='salida'?'Traslado registrado':'Entrada registrada')}
   else if(a==='informePdf'){informePdf();return}
-  else if(a==='crearFactura'){const cli=($('#fcli').value||'').trim(),fe=$('#ffec').value||hoy(),lines=($('#flin').value||'').split('\n').map(x=>x.trim()).filter(Boolean);if(!cli)return msg('Escribe el nombre del cliente');if(!lines.length)return msg('Escribe al menos un producto');const items=[];for(const ln of lines){const m=ln.match(/^(.*?)\s+(\d+)\s+(\d+(?:\.\d+)?)$/);if(!m)return msg('Línea no válida: '+ln);const nom=m[1].trim().toUpperCase(),c=+m[2],pr=+m[3];const prod=S.prods.find(x=>x.nombre.toUpperCase()===nom);if(!prod)return msg('Producto no existe: '+nom);items.push({p:prod.id,nombre:prod.nombre,c,pr})}const total=items.reduce((t,x)=>t+x.c*x.pr,0);const id='f'+Date.now();await S.db.collection('facturas').doc(id).set({cliente:cli,fecha:fe,items,total});for(const x of items){await S.db.collection('bodega').add({tipo:'salida',fecha:fe,producto:x.p,producto_nombre:x.nombre,cantidad:x.c,pid:'',puesto_nombre:'',nota:'Factura de '+cli})}msg('Factura creada: '+money(total))}
+  else if(a==='addFactRow'){S.factLines=(S.factLines||[]).concat([{p:'',c:1,pr:''}]);render(true)}
+  else if(a==='delFactRow'){S.factLines=(S.factLines||[]);S.factLines.splice(+b.dataset.i,1);if(!S.factLines.length)S.factLines=[{p:'',c:1,pr:''}];render(true)}
+  else if(a==='crearFactura'){const cli=($('#fcli').value||'').trim(),fe=$('#ffec').value||hoy();if(!cli)return msg('Escribe el nombre del cliente');const items=(S.factLines||[]).filter(l=>l.p).map(l=>{const x=S.prods.find(z=>z.id===l.p);return{p:l.p,nombre:x?x.nombre:'',c:+l.c||0,pr:+l.pr||0}});if(!items.length)return msg('Elija al menos un producto');if(items.some(x=>!(x.c>0)))return msg('La cantidad debe ser mayor a cero');if(items.some(x=>x.pr<0))return msg('El precio no puede ser negativo');const total=items.reduce((t,x)=>t+x.c*x.pr,0);const id='f'+Date.now();await S.db.collection('facturas').doc(id).set({cliente:cli,fecha:fe,items,total});for(const x of items){await S.db.collection('bodega').add({tipo:'salida',fecha:fe,producto:x.p,producto_nombre:x.nombre,cantidad:x.c,pid:'',puesto_nombre:'',nota:'Factura de '+cli})}S.factLines=null;S.factCli='';msg('Factura creada: '+money(total))}
   else if(a==='cobrar'){const id=b.dataset.id,m=parseFloat($('#cob_'+id).value);const f=(S.facturas||[]).find(x=>x.id===id);if(!f)return;const pag=(S.cobros||[]).filter(c=>c.data.factura===id).reduce((t,c)=>t+(+c.data.monto||0),0);const sal=(+f.data.total||0)-pag;if(!(m>0)||m>sal)return msg('Escribe un monto válido, máximo '+money(sal));await S.db.collection('cobros').add({factura:id,cliente:f.data.cliente,fecha:hoy(),monto:m});msg('Cobro registrado')}
   else if(a==='devolver'){const c=parseInt($('#ec').value,10),p=$('#ep').value;if(!(c>0))return msg('Cantidad inválida');const r=getRec(pid);const disp=((r.inicial&&r.inicial[p])||0)+entOf(r,p);if(c>disp)return msg('Solo puede devolver hasta '+disp+' unidades disponibles');if(!(await yes('¿Devolver '+c+' × '+nomProd(p)+' de '+S.puestos[pid].nombre+' a bodega?')))return;r.entregas=(r.entregas||[]).concat([{p,c:-c,h:new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'}),dev:true}]);await saveRec(r);await S.db.collection('bodega').add({tipo:'entrada',fecha:S.fecha,producto:p,producto_nombre:nomProd(p),cantidad:c,pid:pid,puesto_nombre:S.puestos[pid].nombre,nota:'Devolución de '+S.puestos[pid].nombre});log('Devolvió a bodega '+c+' × '+nomProd(p)+' de '+S.puestos[pid].nombre);msg('Devuelto a bodega')}
   else if(a==='savePrecios'){const pr={};document.querySelectorAll('[data-pp]').forEach(i=>{if(i.value!=='')pr[i.dataset.pp]=+i.value});const maneja=[...document.querySelectorAll('[data-maneja]')].filter(i=>i.checked).map(i=>i.dataset.maneja);await S.db.doc('puestos/'+S.ppSel).update({precios:pr,productos:maneja});log('Productos y precios del puesto '+S.puestos[S.ppSel].nombre);msg('Guardado')}
@@ -692,7 +766,7 @@ document.addEventListener('click',async e=>{
   else if(a==='export'){const f=(prompt('Formato del respaldo: escriba PDF o CSV','PDF')||'').trim().toUpperCase();if(f==='PDF')informePdf();else if(f==='CSV')await exportar();else msg('Escriba PDF o CSV')}
   else if(a==='reabrir'){const r=getRec(pid);r.cerrado=false;await saveRec(r);log('Reabrió el día de '+S.puestos[pid].nombre)}
   else if(a==='liquidar'){const ef=parseFloat($('#ef').value);if(!(ef>=0))return msg('Escribe el efectivo recibido');
-    const r=getRec(pid);r.efectivo=ef;r.liquidado=true;await saveRec(r);log('Liquidó '+S.puestos[pid].nombre+' con efectivo '+ef);msg('Liquidación guardada')}
+    const r=getRec(pid);r.efectivo=ef;r.liquidado=true;await saveRec(r);if(ef>0)await S.db.collection('pagos').add({pid,fecha:S.fecha,monto:ef,nota:'Liquidación del día '+S.fecha});log('Liquidó '+S.puestos[pid].nombre+' con efectivo '+ef);msg('Liquidación guardada')}
   }catch(err){msg('No se pudo guardar: '+(err.message||err))}
 });
 </script>
