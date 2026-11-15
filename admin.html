@@ -240,8 +240,8 @@ function dia(pid,adm){
     const f=cl?(r.final||{})[x.id]:null,pr=cl&&r.precios&&r.precios[x.id]!=null?r.precios[x.id]:x.precio;
     const v=cl&&f!=null?i+e-f:null;if(v!=null){tot+=v*pr;tu+=v;gt+=v*(pr-(S.costos[x.id]||0))}
     return`<tr><td>${esc(x.nombre)}<div class="mut" style="font-size:12px">valor de venta ${money(pr)}${adm?' · costo '+money(S.costos[x.id]||0):''}</div></td>${adm?`<td>${i}</td><td>${e}</td>`:`<td>${i+e}</td>`}
-    <td>${cl?v:`<input type="number" min="0" inputmode="numeric" data-ven="${x.id}" data-max="${i+e}" data-pr="${pr}" value="${(r.parcial||{})[x.id]!=null?r.parcial[x.id]:''}" placeholder="0">`}</td>
-    <td id="q_${x.id}">${cl?f:(i+e)}</td><td id="v_${x.id}">${v==null?'–':money(v*pr)}</td>${adm?`<td>${v==null?'–':money(v*(pr-(S.costos[x.id]||0)))}</td>`:''}</tr>`}).join('');
+    <td>${cl?(v==null?0:v):`<input type="number" min="0" inputmode="numeric" data-ven="${x.id}" data-max="${i+e}" data-pr="${pr}" value="${(r.parcial||{})[x.id]!=null?r.parcial[x.id]:''}" placeholder="0">`}</td>
+    <td id="q_${x.id}">${cl?(f==null?(i+e):f):(i+e)}</td><td id="v_${x.id}">${v==null?'–':money(v*pr)}</td>${adm?`<td>${v==null?'–':money(v*(pr-(S.costos[x.id]||0)))}</td>`:''}</tr>`}).join('');
   const ents=(r.entregas||[]).map((y,i)=>{const x=S.prods.find(z=>z.id===y.p);return`${y.c} × ${esc(x?x.nombre:'(borrado)')} <span class="mut">${esc(y.h||'')}</span>${adm&&!cl?` <button style="padding:0 7px" title="Corregir la cantidad" data-a="edent" data-pid="${pid}" data-i="${i}">✎</button><button class="d" style="padding:0 7px" title="Eliminar esta entrega" data-a="delent" data-pid="${pid}" data-i="${i}">✕</button>`:''}`}).join(' · ')||'<span class="mut">Ninguna</span>';
   let h=`<div class="card"><div class="top"><div><b>${esc(p.nombre)}</b> <span class="mut">· ${esc(p.resp||'')}</span></div>
     <span class="badge">${cl?(r.liquidado?'Liquidado':'Cerrado'):'Abierto'} · ${esc(S.fecha)}</span></div>
