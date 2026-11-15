@@ -544,7 +544,7 @@ function resumenResp(pid){const r=getRec(pid),cl=r.cerrado;let u=0,v=0;
   const c=cuenta(pid,S.mine||[]);
   return`<div class="card"><div class="mut">${cl?'Te quedan (cierre de hoy)':'Inventario que tienes hoy'}</div><div class="big">${u} unidades</div><div>${li}</div><div class="mut" style="margin-top:6px">Valor al precio de liquidación: ${money(v)}</div>${c.deb>0?`<p class="wa" style="margin:10px 0 0">Saldo pendiente de días cerrados: <b>${money(c.deb)}</b></p>`:''}</div>`}
 function cuenta(pid,recs){const p=S.puestos[pid]||{},oe={},cf=(p.corte&&p.corte.fecha)||'';let venta=0,efe=0,arq=0;
-  (recs||S.all||[]).filter(r=>r.pid===pid&&r.fecha>=cf).forEach(r=>{
+  (recs||S.all||[]).filter(r=>r.pid===pid&&r.fecha>=cf).forEach(r=>{if(r.liquidado&&r.fecha>=cf)efe+=+r.efectivo||0;
     if(r.cerrado){S.prods.forEach(x=>{const s=(r.inicial[x.id]||0)+entOf(r,x.id)-((r.final||{})[x.id]||0),pr=(r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:x.precio;venta+=s*pr});arq+=arqVal(r)}
     else S.prods.forEach(x=>{oe[x.id]=(oe[x.id]||0)+entOf(r,x.id)})});
   (S.pagos||[]).forEach(x=>{if(x.pid===pid&&(x.fecha||'')>=cf)efe+=+x.monto||0});
@@ -766,7 +766,7 @@ document.addEventListener('click',async e=>{
   else if(a==='export'){const f=(prompt('Formato del respaldo: escriba PDF o CSV','PDF')||'').trim().toUpperCase();if(f==='PDF')informePdf();else if(f==='CSV')await exportar();else msg('Escriba PDF o CSV')}
   else if(a==='reabrir'){const r=getRec(pid);r.cerrado=false;await saveRec(r);log('Reabrió el día de '+S.puestos[pid].nombre)}
   else if(a==='liquidar'){const ef=parseFloat($('#ef').value);if(!(ef>=0))return msg('Escribe el efectivo recibido');
-    const r=getRec(pid);r.efectivo=ef;r.liquidado=true;await saveRec(r);if(ef>0)await S.db.collection('pagos').add({pid,fecha:S.fecha,monto:ef,nota:'Liquidación del día '+S.fecha});log('Liquidó '+S.puestos[pid].nombre+' con efectivo '+ef);msg('Liquidación guardada')}
+    const r=getRec(pid);r.efectivo=ef;r.liquidado=true;await saveRec(r);log('Liquidó '+S.puestos[pid].nombre+' con efectivo '+ef);msg('Liquidación guardada')}
   }catch(err){msg('No se pudo guardar: '+(err.message||err))}
 });
 </script>
