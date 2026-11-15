@@ -604,7 +604,7 @@ document.addEventListener('click',async e=>{
     const r=getRec(pid);r.entregas=r.entregas||[];const hh=new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'});
     Object.keys(its).forEach(id=>r.entregas.push({p:id,c:its[id],h:hh}));
     await saveRec(r);log('Entrada por lista: '+tot+' unidades a '+S.puestos[pid].nombre);msg('Entrada cargada: '+tot+' unidades')}
-  else if(a==='informe'){await informeDia()}
+  else if(a==='informe'){const f=(prompt('Formato del informe: escriba PDF o CSV','PDF')||'').trim().toUpperCase();if(f==='PDF')informePdf();else if(f==='CSV')await informeDia();else msg('Escriba PDF o CSV')}
   else if(a==='copiar'){await copiar(resumenTxt(pid))}
   else if(a==='reset'){if(!(await yes('¿Borrar TODOS los registros, gastos y la bitácora? Los productos y los puestos se conservan y el inventario de cada puesto queda en 0.')))return;
     for(const r of (S.all||[]))await S.db.doc('registros/'+r.pid+'_'+r.fecha).delete();
@@ -689,7 +689,7 @@ document.addEventListener('click',async e=>{
     await saveRec(r);await S.db.doc('puestos/'+pid).update({stock:fin});log('Cerró el día de '+S.puestos[pid].nombre);msg('Día cerrado')}
   else if(a==='avance'){const r=getRec(pid),pa={};let bad='';document.querySelectorAll('[data-ven]').forEach(i=>{const v=parseInt(i.value,10)||0;if(v>+i.dataset.max)bad='Las vendidas no pueden ser más que las disponibles.';pa[i.dataset.ven]=v});
     if(bad)return msg(bad);r.parcial=pa;await saveRec(r);log('Guardó avance de '+S.puestos[pid].nombre);msg('Avance guardado')}
-  else if(a==='export'){await exportar()}
+  else if(a==='export'){const f=(prompt('Formato del respaldo: escriba PDF o CSV','PDF')||'').trim().toUpperCase();if(f==='PDF')informePdf();else if(f==='CSV')await exportar();else msg('Escriba PDF o CSV')}
   else if(a==='reabrir'){const r=getRec(pid);r.cerrado=false;await saveRec(r);log('Reabrió el día de '+S.puestos[pid].nombre)}
   else if(a==='liquidar'){const ef=parseFloat($('#ef').value);if(!(ef>=0))return msg('Escribe el efectivo recibido');
     const r=getRec(pid);r.efectivo=ef;r.liquidado=true;await saveRec(r);log('Liquidó '+S.puestos[pid].nombre+' con efectivo '+ef);msg('Liquidación guardada')}
