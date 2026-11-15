@@ -78,7 +78,7 @@ const req = (accion, extra) => api(Object.assign({ accion, u: S.ses.u, h: S.ses.
 const regOf = (d, pid, fecha) => (d.registros && d.registros['registros/' + pid + '_' + fecha]) || { entregas: [], parcial: {}, cerrado: false };
 const entOf = (r, p) => (r.entregas || []).reduce((t, y) => y.p === p ? t + Number(y.c) : t, 0);
 function vendido(r, p) {
-  if (r.cerrado && r.final && r.final[p] != null) return entOf(r, p) - r.final[p];
+  if (r.cerrado && r.final && r.final[p] != null) return ((r.inicial && r.inicial[p]) || 0) + entOf(r, p) - r.final[p];
   return (r.parcial && r.parcial[p]) || 0;
 }
 function quitar(r, p, c) {
