@@ -321,11 +321,45 @@ function dibujarPuesto(d) {
     <div class="card">
       <div class="top"><div><b>${esc(p.nombre)}</b> <span class="mut">· ${esc(d.hoy)}</span></div></div>
       ${aviso}
+      ${bloqueResumen(d, r)}
       <div class="sc"><table style="min-width:420px"><tr><th>Producto</th><th>Precio</th><th>Disponible hoy</th><th>Vendidas</th><th>Por liquidar</th></tr>
         ${filas || '<tr><td colspan="5" class="mut">Sin productos</td></tr>'}
         <tr><td colspan="4"><b>Total por liquidar</b></td><td><b id="tot">${pesos(tot)}</b></td></tr></table></div>
       <div class="row" style="margin-top:12px">${botones}<button data-a="copiar">Copiar resumen (WhatsApp)</button></div>
     </div>`;
+}
+
+// ---------- RESUMEN DEL DÍA ----------
+function resumenDia(d, r) {
+  var vend = 0, liq = 0, disp = 0, quedan = 0, lineas = [];
+  d.catalogo.forEach(function (x) {
+    var pr = (r.precios && r.precios[x.id] != null) ? r.precios[x.id] : x.precio;
+    var dp = ((r.inicial && r.inicial[x.id]) || 0) + entOf(r, x.id), v = vendido(r, x.id);
+    if (dp === 0 && v === 0) return;
+    vend += v; liq += v * pr; disp += dp; quedan += dp - v;
+    lineas.push({ nombre: x.nombre, pr: pr, dp: dp, v: v, q: dp - v, l: v * pr });
+  });
+  return { vend: vend, liq: liq, disp: disp, quedan: quedan, lineas: lineas };
+}
+function bloqueResumen(d, r) {
+  var R = resumenDia(d, r);
+  var quedan = R.lineas.length ? `<table style="min-width:360px"><tr><th>Producto</th><th>Disponible</th><th>Vendidas</th><th>Le quedan</th></tr>${R.lineas.map(function (l) {
+    return `<tr><td>${esc(l.nombre)}</td><td>${l.dp}</td><td>${l.v}</td><td><b>${l.q}</b></td></tr>`; }).join('')}</table>` : '<p class="mut" style="margin:0">Sin productos con movimiento hoy.</p>';
+  var cierre = r.cerrado ? `<h2 style="margin:12px 0 6px">Le quedan para el próximo día</h2><div class="sc">${quedan}</div>` : '';
+  return `<div class="card"><b>Resumen del día</b><div class="row mut" style="margin-top:6px;gap:18px"><span>Vendidas: <b>${R.vend}</b></span><span>Por liquidar: <b>${pesos(R.liq)}</b></span><span>Disponible hoy: <b>${R.disp}</b></span></div></div>${cierre}`;
+}
+function textoWhatsApp(d, r) {
+  var R = resumenDia(d, r), p = d.puestos[d.puesto] || {};
+  var l = ['*Tinki Industry Jeans*', 'Puesto: *' + (p.nombre || '') + '*', 'Fecha: ' + d.hoy, '------------------------'];
+  R.lineas.forEach(function (x) {
+    l.push('• ' + x.nombre + ': ' + x.v + ' vendidas × ' + pesos(x.pr) + ' = ' + pesos(x.l) + (x.q ? ' (quedan ' + x.q + ')' : ''));
+  });
+  if (!R.lineas.length) l.push('Sin movimiento hoy.');
+  l.push('------------------------');
+  l.push('*Vendidas:* ' + R.vend + ' unidades');
+  l.push('*Por liquidar:* ' + pesos(R.liq));
+  l.push('*Quedan:* ' + R.quedan + ' unidades');
+  return l.join('\n');
 }
 
 function leerVentas() {
@@ -410,17 +444,11 @@ const A = {
     msg('Día cerrado y enviado'); await refrescar();
   },
   async copiar() {
-    const d = S.d, pa = leerVentas(), r = regOf(d, d.puesto, d.hoy);
-    let t = 'Tinki Industry Jeans · ' + ((d.puestos[d.puesto] || {}).nombre || '') + ' · ' + d.hoy + '\n', tot = 0;
-    d.catalogo.forEach(x => {
-      const pr = (r.precios && r.precios[x.id] != null) ? r.precios[x.id] : x.precio;
-      const v = pa[x.id] || 0, l = v * pr;
-      tot += l;
-      t += x.nombre + ': entregadas ' + entOf(r, x.id) + ', vendidas ' + v + ', por liquidar ' + pesos(l) + '\n';
-    });
-    t += 'Total por liquidar: ' + pesos(tot);
-    await navigator.clipboard.writeText(t);
-    msg('Resumen copiado');
+    const d = S.d, r = regOf(d, d.puesto, d.hoy);
+    const pa = leerVentas();
+    const copia = Object.assign({}, r, { parcial: Object.assign({}, r.parcial || {}, pa) });
+    await navigator.clipboard.writeText(textoWhatsApp(d, copia));
+    msg('Resumen copiado para WhatsApp');
   }
 };
 
