@@ -468,11 +468,62 @@ document.addEventListener('toggle',e=>{const d=e.target;if(d.dataset&&d.dataset.
 function menu(){const G=[['Panel',[['inicio','Panel de control'],['resumen','Resumen del día']]],['Operación',[['puesto','Por puesto (entregas, cierre, arqueo)'],['cuentas','Cuentas por puesto'],['bodega','Bodega'],['clientes','Clientes y facturas']]],['Resultados',[['resultados','Estado de resultados y gastos']]],['Control',[['descuadres','Descuadres'],['bitacora','Bitácora'],['memoria','Memoria mensual']]],['Configuración',[['config','Productos, puestos y claves']]]];
   return'<div class="side">'+G.map(g=>`<details data-g="${g[0]}" ${(S.grp||{})[g[0]]!==false?'open':''}><summary>${g[0]}</summary>${g[1].map(t=>`<button data-a="tab" data-t="${t[0]}" class="${S.tab===t[0]?'on':''}">${t[1]}</button>`).join('')}</details>`).join('')+'</div>'}
 function ventaRec(r){let v=0;S.prods.forEach(x=>{v+=((r.inicial[x.id]||0)+entOf(r,x.id)-((r.final||{})[x.id]||0))*((r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:x.precio)});return v}
+function estadoMes(mes){
+  const prod={},pue={},gcon={},gpue={},gpid={};let V=0,C=0,G=0;
+  (S.all||[]).filter(r=>r.cerrado&&r.fecha.slice(0,7)===mes).forEach(r=>{
+    const p=S.puestos[r.pid]||{},cf=(p.corte&&p.corte.fecha)||'';
+    if(r.fecha<cf)return;
+    S.prods.forEach(x=>{
+      const s=((r.inicial||{})[x.id]||0)+entOf(r,x.id)-((r.final||{})[x.id]||0);
+      if(s<=0)return;
+      const pr=(r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:pprice(r.pid,x),v=s*pr,c=s*(S.costos[x.id]||0);
+      prod[x.id]=prod[x.id]||{n:x.nombre,u:0,v:0,c:0};prod[x.id].u+=s;prod[x.id].v+=v;prod[x.id].c+=c;
+      pue[r.pid]=pue[r.pid]||{n:p.nombre||r.pid,u:0,v:0,c:0};pue[r.pid].u+=s;pue[r.pid].v+=v;pue[r.pid].c+=c;
+      V+=v;C+=c;
+    });
+  });
+  (S.gas||[]).filter(g=>g.fecha.slice(0,7)===mes).forEach(g=>{
+    const m=+g.monto||0,k=g.concepto||'Sin concepto';G+=m;gcon[k]=(gcon[k]||0)+m;
+    if(g.pid&&S.puestos[g.pid]){gpid[g.pid]=(gpid[g.pid]||0)+m}else{gpue['General']=(gpue['General']||0)+m}
+  });
+  return {prod,pue,gcon,gpid,gpue,V,C,U:V-C,G,N:V-C-G};
+}
+function estadoHtml(mes){
+  const E=estadoMes(mes),pc=(v,t)=>t?(v/t*100).toFixed(1)+'%':'0,0%';
+  const etiqueta=new Date(mes+'-01T12:00:00').toLocaleDateString('es-CO',{month:'long',year:'numeric'});
+  const prods=Object.values(E.prod).sort((a,b)=>b.v-a.v);
+  const pues=Object.keys(E.pue).map(id=>({id,...E.pue[id],g:E.gpid[id]||0})).sort((a,b)=>b.v-a.v);
+  const filasP=prods.map(x=>`<tr><td>${esc(x.n)}</td><td class="n">${x.u}</td><td class="n">${money(x.v)}</td><td class="n">${money(x.c)}</td><td class="n">${money(x.v-x.c)}</td><td class="n">${pc(x.v-x.c,x.v)}</td><td class="n">${pc(x.v,E.V)}</td></tr>`).join('')||'<tr><td colspan="7" class="mut">Sin ventas cerradas en el mes.</td></tr>';
+  const filasU=pues.map(x=>`<tr><td><b>${esc(x.n)}</b></td><td class="n">${x.u}</td><td class="n">${money(x.v)}</td><td class="n">${money(x.c)}</td><td class="n">${money(x.v-x.c)}</td><td class="n">${pc(x.v-x.c,x.v)}</td><td class="n">${money(x.g)}</td><td class="n ${(x.v-x.c-x.g)<0?'neg':''}"><b>${money(x.v-x.c-x.g)}</b></td></tr>`).join('')||'<tr><td colspan="8" class="mut">Sin ventas cerradas en el mes.</td></tr>';
+  const gastosC=Object.keys(E.gcon).map(k=>[k,E.gcon[k]]).sort((a,b)=>b[1]-a[1]);
+  const filasG=gastosC.map(([k,v])=>`<tr><td>${esc(k)}</td><td class="n">${money(v)}</td><td class="n">${pc(v,E.V)}</td></tr>`).join('')||'<tr><td colspan="3" class="mut">Sin gastos en el mes.</td></tr>';
+  const lg=(S.gas||[]).filter(g=>g.fecha.slice(0,7)===mes).sort((a,b)=>a.fecha<b.fecha?-1:1).map(g=>`<div class="row" style="margin-bottom:4px"><span style="flex:1">${esc(g.fecha)} · ${esc(g.concepto)} · ${money(g.monto)}${g.pid&&S.puestos[g.pid]?' · '+esc(S.puestos[g.pid].nombre):' · General'}</span><button class="d" data-a="delgasto" data-id="${g.id}">Quitar</button></div>`).join('')||'<span class="mut">Sin gastos registrados este mes.</span>';
+  const concl=E.V?`En ${etiqueta} se vendieron ${prods.reduce((t,x)=>t+x.u,0)} unidades por ${money(E.V)}. Con un costo de ${money(E.C)}, la utilidad bruta es ${money(E.U)} (margen ${pc(E.U,E.V)}). Los gastos suman ${money(E.G)} (${pc(E.G,E.V)} de las ventas), y la utilidad neta es ${money(E.N)} (${pc(E.N,E.V)}).`:`En ${etiqueta} todavía no hay días cerrados con ventas.`;
+  return `<div class="row" style="margin-bottom:10px"><span class="mut">Mes</span><input type="month" id="mes" value="${mes}"><b style="margin-left:6px;text-transform:capitalize">${esc(etiqueta)}</b></div>
+  <div class="kpis" style="margin-bottom:12px">
+    <div class="kpi"><b>${money(E.V)}</b><span>Ventas netas</span></div>
+    <div class="kpi"><b>${money(E.C)}</b><span>Costo de ventas · ${pc(E.C,E.V)}</span></div>
+    <div class="kpi"><b>${money(E.U)}</b><span>Utilidad bruta · margen ${pc(E.U,E.V)}</span></div>
+    <div class="kpi ${E.G>E.U?'neg':''}"><b>${money(E.G)}</b><span>Gastos · ${pc(E.G,E.V)} de ventas</span></div>
+    <div class="kpi ${E.N<0?'neg':''}"><b>${money(E.N)}</b><span>Utilidad neta · margen ${pc(E.N,E.V)}</span></div>
+  </div>
+  <div class="card"><b>1. Ventas y costo por producto</b><div class="sc" style="margin-top:6px"><table><thead><tr><th>Producto</th><th class="n">Unidades</th><th class="n">Ventas</th><th class="n">Costo</th><th class="n">Utilidad bruta</th><th class="n">Margen</th><th class="n">% de ventas</th></tr></thead><tbody>${filasP}</tbody><tfoot><tr><td><b>Total</b></td><td class="n"><b>${prods.reduce((t,x)=>t+x.u,0)}</b></td><td class="n"><b>${money(E.V)}</b></td><td class="n"><b>${money(E.C)}</b></td><td class="n"><b>${money(E.U)}</b></td><td class="n"><b>${pc(E.U,E.V)}</b></td><td class="n">100%</td></tr></tfoot></table></div></div>
+  <div class="card"><b>2. Resultado por puesto</b><p class="mut" style="margin:4px 0 6px;font-size:12px">Utilidad neta del puesto = utilidad bruta − gastos registrados a ese puesto. Los gastos generales no se asignan.</p><div class="sc"><table><thead><tr><th>Puesto</th><th class="n">Unidades</th><th class="n">Ventas</th><th class="n">Costo</th><th class="n">Utilidad bruta</th><th class="n">Margen</th><th class="n">Gastos del puesto</th><th class="n">Utilidad neta</th></tr></thead><tbody>${filasU}</tbody></table></div></div>
+  <div class="card"><b>3. Gastos por concepto</b><div class="sc" style="margin-top:6px"><table><thead><tr><th>Concepto</th><th class="n">Monto</th><th class="n">% de ventas</th></tr></thead><tbody>${filasG}</tbody><tfoot><tr><td><b>Total gastos</b></td><td class="n"><b>${money(E.G)}</b></td><td class="n"><b>${pc(E.G,E.V)}</b></td></tr></tfoot></table></div>
+    <p class="mut" style="margin:8px 0 0;font-size:12px">Gastos generales (no de un puesto): ${money(E.gpue['General']||0)}</p></div>
+  <div class="card"><b>4. Conclusión</b><p style="margin:6px 0 0;line-height:1.5">${esc(concl)}</p></div>
+  <div class="card"><b>Registrar gasto</b> <span class="mut">(fecha: ${S.fecha})</span><div class="row" style="margin-top:8px"><select id="gp"><option value="">General</option>${Object.keys(S.puestos).map(id=>`<option value="${id}">${esc(S.puestos[id].nombre)}</option>`).join('')}</select><input id="gc" list="cg" placeholder="Concepto" style="flex:1;min-width:130px"><datalist id="cg">${['Almuerzo','Bolsas','Flete','Guardada','Parqueadero','Trabajador','Gancho'].map(x=>`<option value="${x}">`).join('')}</datalist><input type="number" id="gm" min="0" placeholder="Monto" style="width:120px"><button class="p" data-a="addgasto">Agregar</button></div><div style="margin-top:10px">${lg}</div></div>`;
+}
+function kfmt(n){n=Math.round(+n||0);return n>=1000000?(n/1000000).toFixed(2).replace('.',',')+' M':n>=1000?Math.round(n/1000)+' mil':String(n)}
+function barrasHtml(list){
+  const mx=Math.max(...list.map(x=>x[1]),1);
+  return `<div class="card"><b>Venta del día por puesto</b><div style="margin-top:8px">${list.map(([n,v])=>`<div class="row" style="margin-bottom:6px"><span style="min-width:170px">${esc(n)}</span><div style="flex:1;background:var(--bd);border-radius:4px;height:18px;min-width:80px"><div style="width:${(v/mx*100).toFixed(1)}%;height:18px;background:var(--ac);border-radius:4px"></div></div><b style="min-width:110px;text-align:right">${money(v)}</b></div>`).join('')||'<span class="mut">Sin ventas hoy.</span>'}</div></div>`;
+}
 function svgDias(R){if(!R.length)return'<p class="mut">Sin ventas cerradas en el periodo.</p>';
   const W=720,H=200,m=30,n=R.length,mx=Math.max(...R.map(r=>r.v),1),mc=Math.max(...R.map(r=>r.cum),1),bw=(W-2*m)/n;
-  const bars=R.map((r,i)=>{const h=(r.v/mx)*(H-2*m);return`<rect x="${m+i*bw+bw*.15}" y="${H-m-h}" width="${bw*.7}" height="${h}" fill="var(--ac)" opacity=".85"><title>${r.f}: ${money(r.v)}</title></rect><text x="${m+i*bw+bw/2}" y="${H-m+13}" font-size="9" text-anchor="middle" fill="var(--mut)">${r.f.slice(8)}</text>`}).join('');
-  const pts=R.map((r,i)=>`${m+i*bw+bw/2},${H-m-(r.cum/mc)*(H-2*m)}`).join(' ');
-  return`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto"><line x1="${m}" y1="${H-m}" x2="${W-m}" y2="${H-m}" stroke="var(--bd)"/>${bars}<polyline points="${pts}" fill="none" stroke="var(--ok)" stroke-width="2"/></svg><p class="mut" style="margin:0;font-size:12px">Barras: venta del día · Línea: acumulado (máximo ${money(mc)})</p>`}
+  const bars=R.map((r,i)=>{const h=(r.v/mx)*(H-2*m);return`<rect x="${m+i*bw+bw*.15}" y="${H-m-h}" width="${bw*.7}" height="${h}" fill="var(--ac)" opacity=".85"><title>${r.f}: ${money(r.v)}</title></rect><text x="${m+i*bw+bw/2}" y="${H-m-h-4}" font-size="10" font-weight="bold" text-anchor="middle" fill="var(--tx)">${kfmt(r.v)}</text><text x="${m+i*bw+bw/2}" y="${H-m+13}" font-size="9" text-anchor="middle" fill="var(--mut)">${r.f.slice(8)}</text>`}).join('');
+  const pts=R.map((r,i)=>`${m+i*bw+bw/2},${H-m-(r.cum/mc)*(H-2*m)}`).join(' ');const etq=R.map((r,i)=>`<text x="${m+i*bw+bw/2}" y="${H-m-(r.cum/mc)*(H-2*m)-7}" font-size="10" text-anchor="middle" fill="var(--ok)">${kfmt(r.cum)}</text>`).join('');
+  return`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto"><line x1="${m}" y1="${H-m}" x2="${W-m}" y2="${H-m}" stroke="var(--bd)"/>${bars}<polyline points="${pts}" fill="none" stroke="var(--ok)" stroke-width="2"/>${etq}</svg><p class="mut" style="margin:0;font-size:12px">Barras: venta del día · Línea: acumulado (máximo ${money(mc)})</p>`}
 function dashHtml(){const D={},P={};let arq=0,inv=0,deb=0,u=0;
   (S.all||[]).forEach(r=>{if(!okf(r.fecha,r.pid))return;if(r.cerrado)S.prods.forEach(x=>{if(S.fq&&S.fq!==x.id)return;const s=(r.inicial[x.id]||0)+entOf(r,x.id)-((r.final||{})[x.id]||0);if(!s)return;
     const pr=(r.precios&&r.precios[x.id]!=null)?r.precios[x.id]:x.precio,d=D[r.fecha]=D[r.fecha]||{u:0,v:0,c:0,g:0},p=P[x.id]=P[x.id]||{u:0,v:0};d.u+=s;d.v+=s*pr;d.c+=s*(S.costos[x.id]||0);p.u+=s;p.v+=s*pr;u+=s});arq+=arqVal(r)});
@@ -574,7 +625,7 @@ function draw0(){
         gu+=t.u;gv+=t.v;gg+=t.g;gd+=t.disp;gq+=t.q;Object.keys(t.A).forEach(k=>{P[k]=P[k]||{d:0,s:0};P[k].d+=t.A[k].d;P[k].s+=t.A[k].s});ge+=t.r.liquidado?t.r.efectivo:0;
         return`<tr><td><a class="lk" data-a="ver" data-pid="${id}">${esc(p.nombre)}</a><div class="mut" style="font-size:12px">${esc(p.resp||'')}</div></td><td>${est}</td><td>${t.disp}</td><td>${t.q}</td><td>${t.r.cerrado||t.r.parcial?t.u:'–'}</td><td>${t.r.cerrado||t.r.parcial?money(t.v):'–'}</td><td>${t.r.liquidado?money(t.r.efectivo):'–'}</td></tr>`}).join('');
       h+=`<div class="card"><div class="sc"><table><thead><tr><th>Puesto</th><th>Estado</th><th>Disponible</th><th>Quedan</th><th>Vendidas</th><th>A liquidar</th><th>Efectivo</th></tr></thead><tbody>${rows||'<tr><td colspan="7" class="mut">Crea puestos en Configuración.</td></tr>'}</tbody>
-      <tfoot><tr><td>Total</td><td></td><td>${gd}</td><td>${gq}</td><td>${gu}</td><td>${money(gv)}</td><td>${money(ge)}</td></tr></tfoot></table></div><p style="margin:10px 0 0">Ganancia estimada (precio de distribución − costo): <b>${money(gg)}</b></p><div class="row" style="margin-top:10px"><button class="p" data-a="informe">Informe del día</button><button data-a="export">Respaldo de la noche (guardar en Drive)</button><span class="mut">Último respaldo: ${S.resp?new Date(S.resp.t).toLocaleString('es-CO'):'ninguno'}</span><div class="mut" style="width:100%;margin-top:6px">Después de descargarlo, envíalo adjunto a <a class="lk" href="mailto:arroyavesantiago80@gmail.com?subject=Respaldo%20inventario%20Tinki%20Industry%20Jeans" target="_blank">arroyavesantiago80@gmail.com</a></div></div></div>${invHtml()}`}
+      <tfoot><tr><td>Total</td><td></td><td>${gd}</td><td>${gq}</td><td>${gu}</td><td>${money(gv)}</td><td>${money(ge)}</td></tr></tfoot></table></div><p style="margin:10px 0 0">Ganancia estimada (precio de distribución − costo): <b>${money(gg)}</b></p><div class="row" style="margin-top:10px"><button class="p" data-a="informe">Informe del día</button><button data-a="export">Respaldo de la noche (guardar en Drive)</button><span class="mut">Último respaldo: ${S.resp?new Date(S.resp.t).toLocaleString('es-CO'):'ninguno'}</span><div class="mut" style="width:100%;margin-top:6px">Después de descargarlo, envíalo adjunto a <a class="lk" href="mailto:arroyavesantiago80@gmail.com?subject=Respaldo%20inventario%20Tinki%20Industry%20Jeans" target="_blank">arroyavesantiago80@gmail.com</a></div></div></div>${barrasHtml(pids.map(id=>[S.puestos[id].nombre,totales(id).v]))}${invHtml()}`}
     if(S.tab==='inicio')h+=dashHtml();
     if(S.tab==='descuadres')h+=descHtml();
     if(S.tab==='memoria')h+=memHtml();
@@ -583,14 +634,7 @@ function draw0(){
     if(S.tab==='clientes')h+=clientesHtml();
     if(S.tab==='bodega')h+=bodegaHtml(pids);
     if(S.tab==='cuentas')h+=pagosHtml(pids)+corteHtml(pids);
-    if(S.tab==='resultados'){const mes=S.mes||S.fecha.slice(0,7),X=resultados(mes),pc=(v,t)=>t?Math.round(v/t*100)+'%':'0%',
-      row=(n,v,t,b)=>`<tr${b?' style="font-weight:700"':''}><td>${esc(n)}</td><td>${money(v)}</td><td>${pc(v,t)}</td></tr>`;
-      const ing=S.prods.filter(x=>X.R[x.id]).map(x=>row(x.nombre,X.R[x.id],X.vt)).join(''),cos=S.prods.filter(x=>X.C[x.id]).map(x=>row('Costo '+x.nombre,X.C[x.id],X.vt)).join(''),gas=Object.keys(X.G).map(k=>row(k,X.G[k],X.vt)).join('');
-      const lg=(S.gas||[]).filter(g=>g.fecha.slice(0,7)===mes).sort((a,b)=>a.fecha<b.fecha?-1:1).map(g=>`<div class="row" style="margin-bottom:4px"><span style="flex:1">${esc(g.fecha)} · ${esc(g.concepto)} · ${money(g.monto)}${g.pid&&S.puestos[g.pid]?' · '+esc(S.puestos[g.pid].nombre):''}</span><button class="d" data-a="delgasto" data-id="${g.id}">Quitar</button></div>`).join('')||'<span class="mut">Sin gastos este mes.</span>';
-      h+=`<div class="row" style="margin-bottom:10px"><span class="mut">Mes</span><input type="month" id="mes" value="${mes}"></div>
-      <div class="card"><b>Estado de resultados</b><div class="sc"><table><thead><tr><th>Concepto</th><th>Valor</th><th>%</th></tr></thead><tbody>${ing}${row('Ingresos por actividades ordinarias',X.vt,X.vt,1)}${cos}${row('Costo por actividades',X.ct,X.vt,1)}${row('Utilidad',X.vt-X.ct,X.vt,1)}${gas}${row('Total gastos',X.gt,X.vt,1)}${row('Utilidad neta',X.vt-X.ct-X.gt,X.vt,1)}</tbody></table></div><p class="mut" style="margin-bottom:0">Suma los días cerrados del mes, con el costo actual de cada producto. Los porcentajes son sobre los ingresos.</p></div>
-      ${tablaPuestos(mes)}
-      <div class="card"><b>Registrar gasto</b> <span class="mut">(fecha: ${S.fecha})</span><div class="row" style="margin-top:8px"><select id="gp"><option value="">General</option>${Object.keys(S.puestos).map(id=>`<option value="${id}">${esc(S.puestos[id].nombre)}</option>`).join('')}</select><input id="gc" list="cg" placeholder="Concepto" style="flex:1;min-width:130px"><datalist id="cg">${['Almuerzo','Bolsas','Flete','Guardada','Parqueadero','Trabajador','Gancho'].map(x=>`<option value="${x}">`).join('')}</datalist><input type="number" id="gm" min="0" placeholder="Monto" style="width:120px"><button class="p" data-a="addgasto">Agregar</button></div><div style="margin-top:10px">${lg}</div></div>`}
+    if(S.tab==='resultados'){const mes=S.mes||S.fecha.slice(0,7);h+=estadoHtml(mes)}
     if(S.tab==='cuentas'){const T={st:0,val:0,venta:0,efe:0,deb:0};
       const rs=pids.map(id=>{const c=cuenta(id),p=S.puestos[id];Object.keys(T).forEach(k=>T[k]+=c[k]);
         return`<tr><td><a class="lk" data-a="ver" data-pid="${id}">${esc(p.nombre)}</a><div class="mut" style="font-size:12px">${esc(p.resp||'')}</div></td><td>${c.st}</td><td>${money(c.val)}</td><td>${money(c.venta)}</td><td>${money(c.efe)}</td><td class="${c.deb>0?'wa':'ok'}"><b>${money(c.deb)}</b></td></tr>`}).join('');
